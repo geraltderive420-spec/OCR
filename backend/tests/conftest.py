@@ -92,3 +92,19 @@ def make_pdf(pages=2, size=(1240, 1754)):
     buf = io.BytesIO()
     imgs[0].save(buf, format="PDF", save_all=True, append_images=imgs[1:], resolution=150)
     return buf.getvalue()
+
+
+@pytest.fixture(autouse=True)
+def no_outbound_network(monkeypatch):
+    """PLAN.md §13 : tout appel réseau sortant est un bug. Seules les adresses locales sont permises."""
+    import socket
+
+    real_connect = socket.socket.connect
+
+    def guarded(self, address):
+        host = address[0] if isinstance(address, tuple) else str(address)
+        if host not in ("127.0.0.1", "::1", "localhost", "0.0.0.0") and not str(host).startswith("127."):
+            raise AssertionError(f"Appel réseau sortant interdit vers {host}")
+        return real_connect(self, address)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded)

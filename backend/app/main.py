@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import admin, auth, documents
+from app.api import admin, auth, documents, meta
 from app.core.config import DEFAULT_SECRET, get_settings
 from app.core.db import init_engine
 
@@ -50,7 +50,7 @@ def create_app() -> FastAPI:
     def health() -> dict:
         return {"status": "ok"}
 
-    for r in (auth.router, documents.router, admin.router):
+    for r in (auth.router, documents.router, admin.router, meta.router):
         app.include_router(r, prefix="/api")
 
     if FRONTEND_DIST.is_dir():  # interface compilée servie par FastAPI (production)

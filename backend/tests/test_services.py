@@ -185,4 +185,15 @@ def test_en_tetes_de_securite_et_pas_de_trace_en_cas_d_erreur(client, make_user,
     r = client.get("/api/health")
     assert r.headers["X-Content-Type-Options"] == "nosniff" and r.headers["X-Frame-Options"] == "DENY"
     assert "default-src 'self'" in r.headers["Content-Security-Policy"]
-    assert client.get("/docs").status_code in (404,)  # pas de documentation interactive exposée
+    for path in ("/docs", "/openapi.json", "/redoc"):  # pas de documentation de l'API exposée
+        r = client.get(path)
+        assert "openapi" not in r.text.lower() and "application/json" not in r.headers.get("content-type", "")
+
+
+def test_le_test_reseau_detecte_un_appel_sortant():
+    import socket
+
+    s = socket.socket()
+    with pytest.raises(AssertionError, match="interdit"):
+        s.connect(("93.184.216.34", 80))
+    s.close()

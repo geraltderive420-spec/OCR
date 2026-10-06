@@ -137,3 +137,13 @@ def test_liste_des_modeles_exclut_les_cloud(client, make_user, login, monkeypatc
     assert out["available"] and [m["name"] for m in out["models"]] == ["gemma4:e2b", "qwen354:latest"]
     monkeypatch.setattr(admin, "ollama_tags", lambda: None)
     assert client.get("/api/admin/ollama/models", headers=login("root")).json()["available"] is False
+
+
+def test_options_pour_tout_utilisateur(client, make_user, login, monkeypatch):
+    from app.api import admin
+
+    make_user()
+    monkeypatch.setattr(admin, "ollama_tags", lambda: [{"name": "gemma4:e2b"}, {"name": "x:cloud"}])
+    out = client.get("/api/options", headers=login()).json()
+    assert out["ollama_models"] == ["gemma4:e2b"] and out["default_model"] == "gemma4:e2b"
+    assert client.get("/api/options").status_code == 401
