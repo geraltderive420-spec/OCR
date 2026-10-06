@@ -39,3 +39,12 @@ Le développement des phases 1 à 9 est terminé et testé en développement (vo
 - Dernière étape de qualité à valider sur documents réels : mise en colonnes (une colonne par page en version 1),
   tampons très proches du texte, tableaux sans bordures.
 - Surya étiquette parfois à tort des blocs imprimés « Handwriting » sur scans dégradés ; Surya 2 le fait beaucoup moins.
+
+## Nettoyage possible
+
+- `D:\ocr_work\` (≈ 10 Go) : environnement et poids de PaddleOCR-VL, abandonné (`venv\paddlevl`, `hf`, `paddlex`, caches pip / npm).
+  À supprimer si vous ne voulez pas relancer ce test. Le cache npm de l'interface est dans `D:\ocr_work\npm`.
+- `backend/data/` (documents de démonstration créés pendant le développement) et la base `ocr_dev` / `ocr_test` de MariaDB
+  (utilisateur `ocr_app`, mot de passe dans `backend/.env`, ignoré par git) : à supprimer avant la mise en production.
+- Le compte `admin` de démonstration créé dans `ocr_dev` (mot de passe de test) : à supprimer avec la base de développement.
+

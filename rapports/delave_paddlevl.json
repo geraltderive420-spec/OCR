@@ -1,0 +1,315 @@
+{
+  "backend": "paddlevl",
+  "environnement": {
+    "python": "3.10.11",
+    "os": "Windows"
+  },
+  "pages": {
+    "total": 12,
+    "reussies": 12,
+    "en_erreur": 0
+  },
+  "erreurs_par_type": {},
+  "temps": {
+    "chargement_modele_s": 29.71,
+    "secondes_par_page": {
+      "n": 12,
+      "moyenne": 74.8602,
+      "mediane": 50.0085,
+      "p90": 94.7664
+    }
+  },
+  "vram_mo": {
+    "avant": 2584,
+    "pic": 2688,
+    "surcout": 104
+  },
+  "confiance": {
+    "n": 0,
+    "moyenne": null,
+    "mediane": null,
+    "p90": null
+  },
+  "blocs_par_etiquette": {
+    "Caption": 1,
+    "PageFooter": 9,
+    "PageHeader": 26,
+    "Picture": 10,
+    "SectionHeader": 15,
+    "Table": 11,
+    "Text": 69
+  },
+  "ecritures": {
+    "part_arabe": 0.5867,
+    "part_latine": 0.4132
+  },
+  "references_appariees": 12,
+  "cer": {
+    "global": {
+      "n": 12,
+      "moyenne": 0.7653,
+      "mediane": 0.6132,
+      "p90": 0.8574
+    },
+    "arabe": {
+      "n": 6,
+      "moyenne": 1.1035,
+      "mediane": 0.6352,
+      "p90": 3.7356
+    },
+    "latin": {
+      "n": 10,
+      "moyenne": 0.5803,
+      "mediane": 0.5744,
+      "p90": 1.0
+    }
+  },
+  "mots": {
+    "rappel_mots": {
+      "n": 12,
+      "moyenne": 0.6752,
+      "mediane": 0.6747,
+      "p90": 0.948
+    },
+    "precision_mots": {
+      "n": 12,
+      "moyenne": 0.7201,
+      "mediane": 0.8008,
+      "p90": 0.9805
+    }
+  },
+  "detection_ecart_absolu_moyen": {
+    "tables": null,
+    "images": null
+  },
+  "detail_pages": [
+    {
+      "page": 1,
+      "secondes": 45.16,
+      "blocs": 13,
+      "caracteres": 1115,
+      "confiance_moyenne": null,
+      "part_arabe": 0.9612,
+      "tableaux": 1,
+      "images": 1,
+      "mots": {
+        "rappel_mots": 0.5935,
+        "precision_mots": 0.5476
+      },
+      "cer": {
+        "global": 0.8574,
+        "arabe": 0.8342,
+        "latin": 0.58
+      }
+    },
+    {
+      "page": 2,
+      "secondes": 312.95,
+      "blocs": 2,
+      "caracteres": 7786,
+      "confiance_moyenne": null,
+      "part_arabe": 1.0,
+      "tableaux": 1,
+      "images": 1,
+      "mots": {
+        "rappel_mots": 0.5428,
+        "precision_mots": 0.1456
+      },
+      "cer": {
+        "global": 3.3393,
+        "arabe": 3.7356,
+        "latin": 1.0
+      }
+    },
+    {
+      "page": 3,
+      "secondes": 68.47,
+      "blocs": 4,
+      "caracteres": 1508,
+      "confiance_moyenne": null,
+      "part_arabe": 1.0,
+      "tableaux": 1,
+      "images": 1,
+      "mots": {
+        "rappel_mots": 0.7897,
+        "precision_mots": 0.8231
+      },
+      "cer": {
+        "global": 0.6632,
+        "arabe": 0.6146,
+        "latin": 1.0
+      }
+    },
+    {
+      "page": 4,
+      "secondes": 50.34,
+      "blocs": 13,
+      "caracteres": 1114,
+      "confiance_moyenne": null,
+      "part_arabe": 0.9583,
+      "tableaux": 1,
+      "images": 1,
+      "mots": {
+        "rappel_mots": 0.5111,
+        "precision_mots": 0.5349
+      },
+      "cer": {
+        "global": 0.5505,
+        "arabe": 0.5557,
+        "latin": 0.7241
+      }
+    },
+    {
+      "page": 5,
+      "secondes": 31.24,
+      "blocs": 5,
+      "caracteres": 212,
+      "confiance_moyenne": null,
+      "part_arabe": 1.0,
+      "tableaux": 2,
+      "images": 1,
+      "mots": {
+        "rappel_mots": 0.321,
+        "precision_mots": 0.8387
+      },
+      "cer": {
+        "global": 0.6733,
+        "arabe": 0.6557,
+        "latin": null
+      }
+    },
+    {
+      "page": 6,
+      "secondes": 94.77,
+      "blocs": 25,
+      "caracteres": 1911,
+      "confiance_moyenne": null,
+      "part_arabe": 1.0,
+      "tableaux": 0,
+      "images": 1,
+      "mots": {
+        "rappel_mots": 0.4574,
+        "precision_mots": 0.5803
+      },
+      "cer": {
+        "global": 0.2552,
+        "arabe": 0.2249,
+        "latin": null
+      }
+    },
+    {
+      "page": 7,
+      "secondes": 49.68,
+      "blocs": 14,
+      "caracteres": 1337,
+      "confiance_moyenne": null,
+      "part_arabe": 0.1188,
+      "tableaux": 1,
+      "images": 1,
+      "mots": {
+        "rappel_mots": 0.6149,
+        "precision_mots": 0.6646
+      },
+      "cer": {
+        "global": 0.6929,
+        "arabe": null,
+        "latin": 0.6986
+      }
+    },
+    {
+      "page": 8,
+      "secondes": 36.12,
+      "blocs": 1,
+      "caracteres": 1414,
+      "confiance_moyenne": null,
+      "part_arabe": 0.0,
+      "tableaux": 1,
+      "images": 0,
+      "mots": {
+        "rappel_mots": 0.7803,
+        "precision_mots": 0.8879
+      },
+      "cer": {
+        "global": 0.6246,
+        "arabe": null,
+        "latin": 0.5645
+      }
+    },
+    {
+      "page": 9,
+      "secondes": 56.56,
+      "blocs": 5,
+      "caracteres": 2199,
+      "confiance_moyenne": null,
+      "part_arabe": 0.0,
+      "tableaux": 1,
+      "images": 0,
+      "mots": {
+        "rappel_mots": 0.8266,
+        "precision_mots": 0.8764
+      },
+      "cer": {
+        "global": 0.6018,
+        "arabe": null,
+        "latin": 0.5687
+      }
+    },
+    {
+      "page": 10,
+      "secondes": 45.49,
+      "blocs": 12,
+      "caracteres": 1308,
+      "confiance_moyenne": null,
+      "part_arabe": 0.121,
+      "tableaux": 1,
+      "images": 1,
+      "mots": {
+        "rappel_mots": 0.7345,
+        "precision_mots": 0.7784
+      },
+      "cer": {
+        "global": 0.3309,
+        "arabe": null,
+        "latin": 0.1531
+      }
+    },
+    {
+      "page": 11,
+      "secondes": 25.21,
+      "blocs": 8,
+      "caracteres": 384,
+      "confiance_moyenne": null,
+      "part_arabe": 0.0,
+      "tableaux": 1,
+      "images": 1,
+      "mots": {
+        "rappel_mots": 0.9828,
+        "precision_mots": 0.9828
+      },
+      "cer": {
+        "global": 0.2005,
+        "arabe": null,
+        "latin": 0.1357
+      }
+    },
+    {
+      "page": 12,
+      "secondes": 82.33,
+      "blocs": 39,
+      "caracteres": 3900,
+      "confiance_moyenne": null,
+      "part_arabe": 0.0,
+      "tableaux": 0,
+      "images": 1,
+      "mots": {
+        "rappel_mots": 0.948,
+        "precision_mots": 0.9805
+      },
+      "cer": {
+        "global": 0.3935,
+        "arabe": null,
+        "latin": 0.3781
+      }
+    }
+  ]
+}
