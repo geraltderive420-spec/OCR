@@ -197,3 +197,22 @@ def test_le_test_reseau_detecte_un_appel_sortant():
     with pytest.raises(AssertionError, match="interdit"):
         s.connect(("93.184.216.34", 80))
     s.close()
+
+
+def test_autodiagnostic(app_env, monkeypatch, capsys):
+    from app import cli
+    from app.core import config
+    from app.selfcheck import KO, OK, run_checks
+
+    monkeypatch.setenv("OCR_SECRET_KEY", config.DEFAULT_SECRET)
+    config.reset_settings_cache()
+    res = run_checks()
+    assert any(r.level == KO and "OCR_SECRET_KEY" in r.message for r in res)  # clé par défaut refusée
+    assert any(r.level == KO and "Migrations" in r.message for r in res)  # base de test créée sans Alembic
+    assert any(r.level == OK and "Base de données joignable" in r.message for r in res)
+    assert cli.main(["check"]) == 1
+    out = capsys.readouterr().out
+    assert config.DEFAULT_SECRET not in out and "échec" in out  # jamais de secret affiché
+    monkeypatch.setenv("OCR_SECRET_KEY", "une-autre-cle-aleatoire-de-plus-de-32-caracteres")
+    config.reset_settings_cache()
+    assert not any("OCR_SECRET_KEY" in r.message and r.level == KO for r in run_checks())

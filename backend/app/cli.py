@@ -2,6 +2,7 @@
 
     python -m app.cli create-admin <identifiant>      (mot de passe demandé, ou variable OCR_ADMIN_PASSWORD)
     python -m app.cli purge
+    python -m app.cli check                            (auto-diagnostic : configuration, base, moteur OCR, Ollama)
 """
 from __future__ import annotations
 
@@ -40,10 +41,15 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("create-admin")
     c.add_argument("username")
     sub.add_parser("purge")
+    sub.add_parser("check")
     args = ap.parse_args(argv)
     init_engine()
     if args.cmd == "create-admin":
         return create_admin(args.username)
+    if args.cmd == "check":
+        from app.selfcheck import main as check_main
+
+        return check_main()
     if args.cmd == "purge":
         with session_scope() as db:
             print(f"{purge_expired(db)} document(s) purgé(s).")
