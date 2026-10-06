@@ -9,10 +9,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("OCR_SECRET_KEY", "cle-de-test-suffisamment-longue-pour-hs256")
 
 
+def _dotenv(key: str) -> str | None:
+    f = Path(__file__).resolve().parents[1] / ".env"
+    if f.exists():
+        for line in f.read_text(encoding="utf-8").splitlines():
+            if line.startswith(key + "="):
+                return line.split("=", 1)[1].strip()
+    return None
+
+
 @pytest.fixture()
 def app_env(tmp_path, monkeypatch):
     """Base SQLite et dossier de données isolés pour chaque test."""
-    monkeypatch.setenv("OCR_DATABASE_URL", f"sqlite:///{(tmp_path / 'test.db').as_posix()}")
+    # OCR_TEST_DATABASE_URL (MariaDB de test) : mêmes tests sur la vraie base ; sinon SQLite isolé.
+    test_url = os.environ.get("OCR_TEST_DATABASE_URL") or _dotenv("OCR_TEST_DATABASE_URL")
+    use_maria = bool(test_url) and os.environ.get("OCR_TEST_SQLITE") != "1"
+    monkeypatch.setenv("OCR_DATABASE_URL", test_url if use_maria else f"sqlite:///{(tmp_path / 'test.db').as_posix()}")
     monkeypatch.setenv("OCR_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("OCR_OCR_BACKEND", "dummy")
     from app.core import config, db
@@ -21,8 +33,10 @@ def app_env(tmp_path, monkeypatch):
     engine = db.init_engine()
     import app.models  # noqa: F401
 
+    db.Base.metadata.drop_all(engine)
     db.Base.metadata.create_all(engine)
     yield tmp_path
+    db.Base.metadata.drop_all(engine)
     engine.dispose()
     config.reset_settings_cache()
     shutil.rmtree(tmp_path / "data", ignore_errors=True)

@@ -159,11 +159,12 @@ def retry(document_id: int, user: User = Depends(current_user), db: Session = De
 # ------------------------------------------------------------------ relecture
 
 def block_out(b: Block) -> dict:
-    return {"id": b.id, "order": b.reading_order, "label": b.label, "bbox": b.bbox, "html": b.html_current,
-            "html_ocr": b.html_ocr, "confidence": b.confidence, "direction": b.direction, "to_check": b.to_check,
-            "error": b.error, "has_crop": bool(b.crop_path),
-            "corrections": [{"id": c.id, "source": c.source, "before": c.before, "after": c.after, "status": c.status,
-                             "model": c.model_name} for c in b.corrections if c.source == "llm"]}
+    # Le HTML vient de l'OCR ou du navigateur : toujours assaini avant d'être affiché dans l'interface.
+    return {"id": b.id, "order": b.reading_order, "label": b.label, "bbox": b.bbox, "html": sanitize_html(b.html_current),
+            "html_ocr": sanitize_html(b.html_ocr), "confidence": b.confidence, "direction": b.direction,
+            "to_check": b.to_check, "error": b.error, "has_crop": bool(b.crop_path),
+            "corrections": [{"id": c.id, "source": c.source, "before": sanitize_html(c.before), "after": sanitize_html(c.after),
+                             "status": c.status, "model": c.model_name} for c in b.corrections if c.source == "llm"]}
 
 
 @router.get("/documents/{document_id}/pages/{n}")

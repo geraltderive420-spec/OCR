@@ -59,4 +59,10 @@ def detect_stamps(bgr: np.ndarray, visual_boxes: list[tuple], text_boxes: list[t
                 continue
             overlaps = any(_iou_contains(t, box) > 0.15 or _iou_contains(box, t) > 0.15 for t in text_boxes)
             found.append(StampBox(box, name, overlaps))
-    return found
+    # Un tampon est fait de plusieurs traits (anneau, texte) : on écarte les boîtes contenues dans une plus grande.
+    found.sort(key=lambda s: -(s.bbox[2] - s.bbox[0]) * (s.bbox[3] - s.bbox[1]))
+    kept: list[StampBox] = []
+    for s in found:
+        if not any(_iou_contains(s.bbox, k.bbox) > 0.9 for k in kept):
+            kept.append(s)
+    return kept

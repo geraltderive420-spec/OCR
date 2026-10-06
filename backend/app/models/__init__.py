@@ -6,9 +6,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
+
+
+# Text MariaDB = 64 Ko seulement : un grand tableau HTML le dépasserait.
+LongText = Text().with_variant(LONGTEXT(), "mysql", "mariadb")
 
 
 def utcnow() -> datetime:
@@ -118,8 +123,8 @@ class Block(Base):
     reading_order: Mapped[int] = mapped_column(Integer, default=0)
     label: Mapped[str] = mapped_column(String(32))
     bbox: Mapped[list[float]] = mapped_column(JSON)  # [x0, y0, x1, y1] en pixels de l'image de la page
-    html_ocr: Mapped[str] = mapped_column(Text, default="")
-    html_current: Mapped[str] = mapped_column(Text, default="")
+    html_ocr: Mapped[str] = mapped_column(LongText, default="")
+    html_current: Mapped[str] = mapped_column(LongText, default="")
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     crop_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     direction: Mapped[str] = mapped_column(String(3), default="ltr")
@@ -136,8 +141,8 @@ class Correction(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     block_id: Mapped[int] = mapped_column(ForeignKey("blocks.id", ondelete="CASCADE"), index=True)
     source: Mapped[str] = mapped_column(String(8))  # llm | user
-    before: Mapped[str] = mapped_column(Text)
-    after: Mapped[str] = mapped_column(Text)
+    before: Mapped[str] = mapped_column(LongText)
+    after: Mapped[str] = mapped_column(LongText)
     status: Mapped[str] = mapped_column(String(16), default=CorrectionStatus.proposed.value)
     model_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
