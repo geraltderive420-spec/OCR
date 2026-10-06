@@ -1,0 +1,319 @@
+{
+  "backend": "surya1",
+  "environnement": {
+    "python": "3.13.13",
+    "os": "Windows"
+  },
+  "pages": {
+    "total": 12,
+    "reussies": 12,
+    "en_erreur": 0
+  },
+  "erreurs_par_type": {},
+  "temps": {
+    "chargement_modele_s": 17.48,
+    "secondes_par_page": {
+      "n": 12,
+      "moyenne": 147.4669,
+      "mediane": 135.0832,
+      "p90": 203.0404
+    }
+  },
+  "vram_mo": {
+    "avant": 3633,
+    "pic": 3961,
+    "surcout": 328
+  },
+  "confiance": {
+    "n": 90,
+    "moyenne": 0.9805,
+    "mediane": 0.9866,
+    "p90": 0.9971
+  },
+  "blocs_par_etiquette": {
+    "Equation": 2,
+    "Figure": 1,
+    "ListItem": 1,
+    "PageHeader": 6,
+    "Picture": 4,
+    "SectionHeader": 13,
+    "Table": 11,
+    "TableOfContents": 1,
+    "Text": 51,
+    "TextInlineMath": 1,
+    "Unassigned": 2
+  },
+  "ecritures": {
+    "part_arabe": 0.4272,
+    "part_latine": 0.5725
+  },
+  "references_appariees": 12,
+  "cer": {
+    "global": {
+      "n": 12,
+      "moyenne": 0.5833,
+      "mediane": 0.6218,
+      "p90": 0.7196
+    },
+    "arabe": {
+      "n": 6,
+      "moyenne": 0.5955,
+      "mediane": 0.5991,
+      "p90": 0.7976
+    },
+    "latin": {
+      "n": 10,
+      "moyenne": 0.553,
+      "mediane": 0.5019,
+      "p90": 1.0
+    }
+  },
+  "mots": {
+    "rappel_mots": {
+      "n": 12,
+      "moyenne": 0.8269,
+      "mediane": 0.8488,
+      "p90": 0.9435
+    },
+    "precision_mots": {
+      "n": 12,
+      "moyenne": 0.8327,
+      "mediane": 0.8444,
+      "p90": 0.9676
+    }
+  },
+  "detection_ecart_absolu_moyen": {
+    "tables": null,
+    "images": null
+  },
+  "detail_pages": [
+    {
+      "page": 1,
+      "secondes": 118.64,
+      "blocs": 2,
+      "caracteres": 1132,
+      "confiance_moyenne": 0.9632,
+      "part_arabe": 0.9667,
+      "tableaux": 0,
+      "images": 1,
+      "mots": {
+        "rappel_mots": 0.8194,
+        "precision_mots": 0.7471
+      },
+      "cer": {
+        "global": 0.8366,
+        "arabe": 0.7976,
+        "latin": 0.44
+      }
+    },
+    {
+      "page": 2,
+      "secondes": 193.5,
+      "blocs": 6,
+      "caracteres": 1922,
+      "confiance_moyenne": 0.9757,
+      "part_arabe": 1.0,
+      "tableaux": 2,
+      "images": 0,
+      "mots": {
+        "rappel_mots": 0.8355,
+        "precision_mots": 0.8355
+      },
+      "cer": {
+        "global": 0.6063,
+        "arabe": 0.5556,
+        "latin": 1.0
+      }
+    },
+    {
+      "page": 3,
+      "secondes": 142.7,
+      "blocs": 2,
+      "caracteres": 1566,
+      "confiance_moyenne": 0.9599,
+      "part_arabe": 1.0,
+      "tableaux": 1,
+      "images": 0,
+      "mots": {
+        "rappel_mots": 0.786,
+        "precision_mots": 0.7802
+      },
+      "cer": {
+        "global": 0.6832,
+        "arabe": 0.6426,
+        "latin": 1.0
+      }
+    },
+    {
+      "page": 4,
+      "secondes": 111.43,
+      "blocs": 2,
+      "caracteres": 1135,
+      "confiance_moyenne": 0.9715,
+      "part_arabe": 0.9644,
+      "tableaux": 0,
+      "images": 1,
+      "mots": {
+        "rappel_mots": 0.6278,
+        "precision_mots": 0.6608
+      },
+      "cer": {
+        "global": 0.5692,
+        "arabe": 0.5367,
+        "latin": 0.1034
+      }
+    },
+    {
+      "page": 5,
+      "secondes": 49.93,
+      "blocs": 2,
+      "caracteres": 454,
+      "confiance_moyenne": 0.9874,
+      "part_arabe": 1.0,
+      "tableaux": 2,
+      "images": 0,
+      "mots": {
+        "rappel_mots": 0.7901,
+        "precision_mots": 0.8533
+      },
+      "cer": {
+        "global": 0.3488,
+        "arabe": 0.356,
+        "latin": null
+      }
+    },
+    {
+      "page": 6,
+      "secondes": 162.59,
+      "blocs": 15,
+      "caracteres": 1944,
+      "confiance_moyenne": 0.974,
+      "part_arabe": 1.0,
+      "tableaux": 0,
+      "images": 0,
+      "mots": {
+        "rappel_mots": 0.5194,
+        "precision_mots": 0.6401
+      },
+      "cer": {
+        "global": 0.704,
+        "arabe": 0.6846,
+        "latin": null
+      }
+    },
+    {
+      "page": 7,
+      "secondes": 127.46,
+      "blocs": 3,
+      "caracteres": 1334,
+      "confiance_moyenne": 0.9868,
+      "part_arabe": 0.1044,
+      "tableaux": 1,
+      "images": 1,
+      "mots": {
+        "rappel_mots": 0.8621,
+        "precision_mots": 0.7979
+      },
+      "cer": {
+        "global": 0.7196,
+        "arabe": null,
+        "latin": 0.7637
+      }
+    },
+    {
+      "page": 8,
+      "secondes": 145.81,
+      "blocs": 5,
+      "caracteres": 1569,
+      "confiance_moyenne": 0.9748,
+      "part_arabe": 0.0,
+      "tableaux": 2,
+      "images": 0,
+      "mots": {
+        "rappel_mots": 0.8977,
+        "precision_mots": 0.8977
+      },
+      "cer": {
+        "global": 0.6373,
+        "arabe": null,
+        "latin": 0.5638
+      }
+    },
+    {
+      "page": 9,
+      "secondes": 203.04,
+      "blocs": 5,
+      "caracteres": 2260,
+      "confiance_moyenne": 0.9745,
+      "part_arabe": 0.0,
+      "tableaux": 1,
+      "images": 0,
+      "mots": {
+        "rappel_mots": 0.8997,
+        "precision_mots": 0.8997
+      },
+      "cer": {
+        "global": 0.6527,
+        "arabe": null,
+        "latin": 0.6012
+      }
+    },
+    {
+      "page": 10,
+      "secondes": 116.71,
+      "blocs": 2,
+      "caracteres": 1288,
+      "confiance_moyenne": 0.9819,
+      "part_arabe": 0.062,
+      "tableaux": 1,
+      "images": 1,
+      "mots": {
+        "rappel_mots": 0.9435,
+        "precision_mots": 0.9126
+      },
+      "cer": {
+        "global": 0.4237,
+        "arabe": null,
+        "latin": 0.3235
+      }
+    },
+    {
+      "page": 11,
+      "secondes": 46.91,
+      "blocs": 7,
+      "caracteres": 384,
+      "confiance_moyenne": 0.9837,
+      "part_arabe": 0.0,
+      "tableaux": 1,
+      "images": 1,
+      "mots": {
+        "rappel_mots": 1.0,
+        "precision_mots": 1.0
+      },
+      "cer": {
+        "global": 0.4089,
+        "arabe": null,
+        "latin": 0.3463
+      }
+    },
+    {
+      "page": 12,
+      "secondes": 350.88,
+      "blocs": 42,
+      "caracteres": 4013,
+      "confiance_moyenne": 0.9859,
+      "part_arabe": 0.0,
+      "tableaux": 0,
+      "images": 0,
+      "mots": {
+        "rappel_mots": 0.9417,
+        "precision_mots": 0.9676
+      },
+      "cer": {
+        "global": 0.4097,
+        "arabe": null,
+        "latin": 0.3885
+      }
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "backend": "surya2",
+  "environnement": {
+    "python": "3.13.13",
+    "os": "Windows"
+  },
+  "pages": {
+    "total": 1,
+    "reussies": 1,
+    "en_erreur": 0
+  },
+  "erreurs_par_type": {},
+  "temps": {
+    "chargement_modele_s": 10.71,
+    "secondes_par_page": {
+      "n": 1,
+      "moyenne": 111.5219,
+      "mediane": 111.5219,
+      "p90": 111.5219
+    }
+  },
+  "vram_mo": {
+    "avant": 1838,
+    "pic": 1997,
+    "surcout": 159
+  },
+  "confiance": {
+    "n": 18,
+    "moyenne": 0.9181,
+    "mediane": 0.9206,
+    "p90": 1.0
+  },
+  "blocs_par_etiquette": {
+    "PageHeader": 4,
+    "Picture": 2,
+    "SectionHeader": 2,
+    "Table": 1,
+    "Text": 9
+  },
+  "ecritures": {
+    "part_arabe": 0.1007,
+    "part_latine": 0.884
+  },
+  "references_appariees": 1,
+  "cer": {
+    "global": {
+      "n": 1,
+      "moyenne": 0.795,
+      "mediane": 0.795,
+      "p90": 0.795
+    },
+    "arabe": {
+      "n": 0,
+      "moyenne": null,
+      "mediane": null,
+      "p90": null
+    },
+    "latin": {
+      "n": 1,
+      "moyenne": 0.8595,
+      "mediane": 0.8595,
+      "p90": 0.8595
+    }
+  },
+  "detection_ecart_absolu_moyen": {
+    "tables": null,
+    "images": null
+  },
+  "detail_pages": [
+    {
+      "page": 1,
+      "secondes": 111.52,
+      "blocs": 18,
+      "caracteres": 1646,
+      "confiance_moyenne": 0.9181,
+      "part_arabe": 0.1007,
+      "tableaux": 1,
+      "images": 2,
+      "cer": {
+        "global": 0.795,
+        "arabe": null,
+        "latin": 0.8595
+      }
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+# Secrets et configuration locale
+.env
+
+# Documents réels et sorties : jamais dans le dépôt (PLAN.md §4 bis)
+scans_confidentiels/
+data/
+samples/degrades/
+*.docx
+
+# Python / tests
+__pycache__/
+.pytest_tmp/
+.venv*/
+samples/
+rapports/*.log
+.gpu.lock
+node_modules/
+frontend/dist/
+backend/data/
+*.pyc
