@@ -123,10 +123,13 @@ class Worker:
             db.rollback()
             doc = db.get(Document, job.document_id)
             job = db.get(Job, job.id)
+            if job is None:
+                return
             job.status, job.error = JobStatus.failed.value, type(e).__name__
-            doc.status, doc.error = DocStatus.failed.value, f"Échec du traitement ({type(e).__name__})"
+            if doc is not None:  # le document a pu être supprimé pendant le traitement
+                doc.status, doc.error = DocStatus.failed.value, f"Échec du traitement ({type(e).__name__})"
             db.commit()
-            log.exception("document %s : échec (%s)", doc.id, type(e).__name__)
+            log.error("document %s : échec (%s)", job.document_id, type(e).__name__)
 
     def _process(self, db: Session, doc: Document) -> None:
         opts = pipeline.doc_options(doc)

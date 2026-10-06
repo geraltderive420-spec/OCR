@@ -62,7 +62,9 @@ def find_binary() -> Path:
 class LlamaServer:
     """Processus `llama-server` possédé par le worker."""
 
-    def __init__(self, port: int | None = None, startup_timeout: float = 300.0):
+    def __init__(self, port: int | None = None, startup_timeout: float = 300.0, build_cmd=None):
+        """`build_cmd(port) -> list[str]` remplace la commande llama-server (tests avec un faux serveur)."""
+        self._build_cmd = build_cmd
         self.port = port or get_settings().llama_port
         self.startup_timeout = startup_timeout
         self.proc: subprocess.Popen | None = None
@@ -81,18 +83,22 @@ class LlamaServer:
     def running(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
-    def start(self) -> None:
-        if self.running() and self.healthy():
-            return
-        self.stop()
-        if self.healthy():
-            raise LlamaServerError(f"Le port {self.port} est déjà occupé par un autre serveur.")
+    def _llama_cmd(self) -> list[str]:
         model, mmproj = _gguf_paths()
         cmd = [str(find_binary()), "-m", model, "--mmproj", mmproj, "-ngl", os.environ.get("LLAMA_CPP_NGL", "99"),
                "--host", "127.0.0.1", "--port", str(self.port), "--parallel", "1", "--ctx-size", str(CTX_SIZE),
                "--alias", MODEL_ALIAS, "--jinja"]
         if os.environ.get("LLAMA_CPP_NO_MMPROJ_OFFLOAD", "").lower() in {"1", "true"}:
             cmd.append("--no-mmproj-offload")
+        return cmd
+
+    def start(self) -> None:
+        if self.running() and self.healthy():
+            return
+        self.stop()
+        if self.healthy():
+            raise LlamaServerError(f"Le port {self.port} est déjà occupé par un autre serveur.")
+        cmd = self._build_cmd(self.port) if self._build_cmd else self._llama_cmd()
         logdir = get_settings().data_dir / "logs"
         logdir.mkdir(parents=True, exist_ok=True)
         self._log_fp = open(logdir / "llama-server.log", "ab")  # journal technique : aucun contenu de document

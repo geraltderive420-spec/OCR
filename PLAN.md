@@ -6,6 +6,23 @@ Ce document est le cahier de route destiné à Claude Code. Lis-le en entier ava
 
 Application web client-serveur, utilisée en interne sur un réseau local sans Internet. Un utilisateur connecté dépose un PDF scanné (souvent très délavé), l'application en fait l'OCR et produit un DOCX **éditable qui reprend la structure** du document : titres, paragraphes, tableaux, en-têtes et pieds de page, schémas, tampons et signatures.
 
+## 1 bis. État d'avancement (07/10/2026)
+
+| Phase | État | Preuves |
+|---|---|---|
+| 0 Validation technique | **Faite en développement** ; mesures RTX 3060 et vrais scans à faire par l'utilisateur | `docs/phase0-*.md`, `rapports/` |
+| 1 Socle (base, authentification, rôles, audit) | Faite | tests d'authentification et d'isolation |
+| 2 Upload, file d'attente, prétraitement | Faite | reprise d'un job tué, attente du GPU, page en échec |
+| 3 OCR et modèle intermédiaire | Faite (moteur factice en test ; Surya 2 validé sur échantillons) | tests du pipeline, test d'appel réseau sortant |
+| 4 Générateur DOCX | Faite | tableaux fusionnés, arabe bidi, en-têtes réels, paysage |
+| 5 Interface de base | Faite | parcours validé dans un navigateur |
+| 6 Correction par l'IA | Faite | garde-fous, modes automatique / à valider, Ollama arrêté, **modèle choisi dans les paramètres et par document** |
+| 7 Écran de relecture | Faite | scan / texte côte à côte, différences, accepter / refuser / annuler |
+| 8 Administration, statistiques, rétention | Faite | utilisateurs, paramètres, services, purge, quotas |
+| 9 Déploiement Windows hors ligne | Scripts écrits et vérifiés syntaxiquement ; **non exécutés sur la machine de production** | `deploy/windows/`, `docs/INSTALLATION.md` |
+
+Reste à faire par l'utilisateur : voir `docs/REPRISE.md`.
+
 ## 2. Décisions arrêtées
 
 | Sujet | Décision |

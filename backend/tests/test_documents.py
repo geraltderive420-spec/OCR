@@ -207,3 +207,35 @@ def test_attente_gpu(client, make_user, login, monkeypatch):
     with session_scope() as db:
         j = db.query(Job).first()
         assert j.status == "queued" and j.attempts == 0
+
+
+def test_suppression_refusee_pendant_le_traitement(client, make_user, login):
+    from app.models import DocStatus
+
+    make_user()
+    h = login()
+    doc = upload(client, h, make_pdf(1)).json()
+    with session_scope() as db:
+        db.get(Document, doc["id"]).status = DocStatus.ocr.value
+    assert client.delete(f"/api/documents/{doc['id']}", headers=h).status_code == 409
+    with session_scope() as db:
+        db.get(Document, doc["id"]).status = DocStatus.queued.value
+    assert client.delete(f"/api/documents/{doc['id']}", headers=h).status_code == 204  # en file : suppression possible
+    run_worker()  # le job a disparu avec le document : rien à traiter, aucun plantage
+
+
+def test_document_supprime_pendant_le_traitement(client, make_user, login, monkeypatch):
+    make_user()
+    h = login()
+    doc = upload(client, h, make_pdf(1)).json()
+    from app.services import pipeline
+
+    def vanish(db, d):
+        db.delete(d)
+        db.commit()
+        raise RuntimeError("document disparu")
+
+    monkeypatch.setattr(pipeline, "render_and_preprocess", vanish)
+    assert Worker().run_once()  # ne plante pas
+    with session_scope() as db:
+        assert db.query(Document).count() == 0

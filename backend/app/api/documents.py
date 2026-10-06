@@ -21,6 +21,7 @@ router = APIRouter(tags=["documents"])
 PDF_MAGIC = b"%PDF-"
 VALID_PREPROCESS = {"auto", "leger", "delave", "tres_delave"}
 VALID_LLM = {"off", "auto", "validate"}
+BUSY = {DocStatus.preprocessing.value, DocStatus.ocr.value, DocStatus.correcting.value, DocStatus.exporting.value}
 ACTIVE = {DocStatus.queued.value, DocStatus.waiting_gpu.value, DocStatus.preprocessing.value, DocStatus.ocr.value,
           DocStatus.correcting.value, DocStatus.exporting.value}
 
@@ -134,6 +135,8 @@ def get_document(document_id: int, user: User = Depends(current_user), db: Sessi
 @router.delete("/documents/{document_id}", status_code=204)
 def delete_document(document_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)) -> None:
     doc = get_owned(db, user, document_id)
+    if doc.status in BUSY:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Le document est en cours de traitement : réessayez dans un instant.")
     uid, did = doc.user_id, doc.id
     db.delete(doc)  # lignes en cascade : pages, blocs, corrections, jobs, exports
     audit(db, user.id, "delete", did)
