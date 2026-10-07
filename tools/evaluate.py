@@ -71,6 +71,33 @@ def word_overlap(ref: str, hyp: str) -> dict[str, float | None]:
     return {"rappel_mots": common / nr if nr else None, "precision_mots": common / nh if nh else None}
 
 
+_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+_ARABIC_VARIANTS = str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ٱ": "ا", "ى": "ي", "ة": "ه", "ؤ": "و", "ئ": "ي"})
+
+
+def canonical(s: str) -> str:
+    """Forme canonique pour comparer sans les artefacts de la référence (couche texte d'un PDF) :
+    lettres et chiffres seulement (ni espaces ni ponctuation : la couche texte coupe les mots arabes, « رشي د »),
+    chiffres arabes-indiens → ASCII, variantes d'alef / ya / ta marbuta unifiées, minuscules."""
+    s = normalize(s).translate(_DIGITS).translate(_ARABIC_VARIANTS).lower()
+    return "".join(c for c in s if c.isalnum())
+
+
+def ngram_overlap(ref: str, hyp: str, n: int = 3) -> dict[str, float | None]:
+    """Rappel / précision sur les trigrammes de caractères de la forme canonique : insensible à l'ordre des
+    blocs (colonnes) comme aux espaces mal placés de la référence. Mesure principale pour l'arabe."""
+    from collections import Counter
+
+    def grams(t: str) -> Counter:
+        c = canonical(t)
+        return Counter(c[i:i + n] for i in range(len(c) - n + 1))
+
+    r, h = grams(ref), grams(hyp)
+    common = sum((r & h).values())
+    nr, nh = sum(r.values()), sum(h.values())
+    return {"rappel_car": common / nr if nr else None, "precision_car": common / nh if nh else None}
+
+
 def cer(ref: str, hyp: str) -> float | None:
     return Levenshtein.distance(ref, hyp) / len(ref) if ref else None
 
@@ -157,7 +184,7 @@ def evaluate(backend, pages: list[tuple[str, Image.Image]], reference: Path | No
     all_conf: list[float] = []
     label_counts: dict[str, int] = {}
     cers: dict[str, list[float]] = {"global": [], "arabe": [], "latin": []}
-    words: dict[str, list[float]] = {"rappel_mots": [], "precision_mots": []}
+    words: dict[str, list[float]] = {"rappel_mots": [], "precision_mots": [], "rappel_car": [], "precision_car": []}
     det_err = {"tables": [], "images": []}
     ar = lat = tot = 0
     times: list[float] = []
@@ -208,7 +235,7 @@ def evaluate(backend, pages: list[tuple[str, Image.Image]], reference: Path | No
                 if ref_txt.is_file():
                     matched += 1
                     ref_text = ref_txt.read_text(encoding="utf-8")
-                    wo = word_overlap(ref_text, text)
+                    wo = {**word_overlap(ref_text, text), **ngram_overlap(ref_text, text)}
                     for k, v in wo.items():
                         if v is not None:
                             words[k].append(v)

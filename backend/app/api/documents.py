@@ -13,13 +13,15 @@ from app.api.deps import current_user
 from app.core.db import get_db
 from app.core.security import random_name
 from app.models import (Block, Correction, CorrectionStatus, DocStatus, Document, Job, JobStatus, Page, User, utcnow)
-from app.services import app_settings, pipeline, storage
+from app.services import app_settings, document_model, pipeline, storage
 from app.services.audit import audit
 from app.services.ocr.html_utils import direction_of, sanitize_html, to_text
 
 router = APIRouter(tags=["documents"])
 PDF_MAGIC = b"%PDF-"
 VALID_PREPROCESS = {"auto", "leger", "delave", "tres_delave"}
+# Police latine du Word, au choix pour chaque document (la famille ne se détecte pas de façon fiable sur un scan).
+DOCX_FONTS = {"Arial", "Times New Roman", "Calibri", "Cambria", "Verdana", "Tahoma"}
 VALID_LLM = {"off", "auto", "validate"}
 BUSY = {DocStatus.preprocessing.value, DocStatus.ocr.value, DocStatus.correcting.value, DocStatus.exporting.value}
 ACTIVE = {DocStatus.queued.value, DocStatus.waiting_gpu.value, DocStatus.preprocessing.value, DocStatus.ocr.value,
@@ -55,8 +57,8 @@ def enqueue(db: Session, doc: Document, kind: str = "process") -> None:
 @router.post("/documents", status_code=201)
 def upload(file: UploadFile = File(...), preprocess: str = Form("auto"), llm: str = Form("off"),
            review: bool = Form(False), ollama_model: str | None = Form(None), llm_all: bool = Form(False),
-           user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
-    if preprocess not in VALID_PREPROCESS or llm not in VALID_LLM:
+           font: str = Form(""), user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+    if preprocess not in VALID_PREPROCESS or llm not in VALID_LLM or (font and font not in DOCX_FONTS):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Options invalides.")
     if ollama_model:
         try:
@@ -93,7 +95,7 @@ def upload(file: UploadFile = File(...), preprocess: str = Form("auto"), llm: st
         doc = Document(user_id=user.id, original_filename=safe_filename(file.filename or ""), stored_name="",
                        size_bytes=size, page_count=pages,
                        options={"preprocess": preprocess, "llm": llm, "review": review, "llm_all": llm_all,
-                                "ollama_model": ollama_model or None})
+                                "ollama_model": ollama_model or None, "font": font or None})
         db.add(doc)
         db.flush()
         dest, _ = storage.new_path("uploads", user.id, doc.id, ".pdf")
@@ -223,13 +225,45 @@ def _owned_correction(db: Session, user: User, cid: int) -> Correction:
 class BlockPatch(BaseModel):
     html: str | None = None
     to_check: bool | None = None
+    label: str | None = None  # correction d'une détection : texte pris pour une image, titre pris pour du texte…
+
+
+# Types qu'un utilisateur peut attribuer à un bloc dans la relecture.
+EDITABLE_LABELS = {"Text", "SectionHeader", "ListItem", "Caption", "Footnote", "PageHeader", "PageFooter", "Table",
+                   "Picture", "Stamp"}
+
+
+def _editable(b: Block) -> None:
+    if b.page.document.status not in (DocStatus.review.value, DocStatus.done.value):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Le document n'est pas modifiable maintenant.")
+
+
+def _ensure_crop(b: Block) -> None:
+    """Un bloc devenu image a besoin de sa découpe dans l'image de la page."""
+    if b.crop_path and storage.resolve(b.crop_path).is_file():
+        return
+    page = b.page
+    if not page.image_path:
+        return
+    import cv2
+    import numpy as np
+
+    img = cv2.imdecode(np.fromfile(str(storage.resolve(page.image_path)), dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is not None:
+        document_model.save_crop(b, page.document, img)
 
 
 @router.patch("/blocks/{block_id}")
 def patch_block(block_id: int, body: BlockPatch, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
     b = _owned_block(db, user, block_id)
-    if b.page.document.status not in (DocStatus.review.value, DocStatus.done.value):
-        raise HTTPException(status.HTTP_409_CONFLICT, "Le document n'est pas modifiable maintenant.")
+    _editable(b)
+    if body.label is not None and body.label != b.label:
+        if body.label not in EDITABLE_LABELS:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Type de bloc inconnu.")
+        b.label = body.label
+        if body.label in ("Picture", "Stamp"):
+            _ensure_crop(b)
+        b.to_check = False
     if body.html is not None:
         new = sanitize_html(body.html)
         if len(new) > 200_000:
@@ -243,6 +277,20 @@ def patch_block(block_id: int, body: BlockPatch, user: User = Depends(current_us
         b.to_check = body.to_check
     db.commit()
     return block_out(b)
+
+
+@router.delete("/blocks/{block_id}", status_code=204)
+def delete_block(block_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)) -> None:
+    """Supprime un bloc détecté à tort (bruit, signature lue comme du texte, doublon)."""
+    b = _owned_block(db, user, block_id)
+    _editable(b)
+    if b.crop_path:
+        try:
+            storage.resolve(b.crop_path).unlink(missing_ok=True)
+        except OSError:
+            pass
+    db.delete(b)
+    db.commit()
 
 
 @router.post("/corrections/{correction_id}/accept")

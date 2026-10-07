@@ -239,3 +239,25 @@ def test_document_supprime_pendant_le_traitement(client, make_user, login, monke
     assert Worker().run_once()  # ne plante pas
     with session_scope() as db:
         assert db.query(Document).count() == 0
+
+
+def test_relecture_change_le_type_et_supprime_un_bloc(client, make_user, login):
+    """Correction d'une détection fausse : un texte devient une image (avec sa découpe), un bloc parasite est supprimé."""
+    make_user()
+    h = login()
+    doc = upload(client, h, make_pdf(1), review=True).json()
+    run_worker()
+    page = client.get(f"/api/documents/{doc['id']}/pages/0", headers=h).json()
+    text = next(b for b in page["blocks"] if b["label"] == "Text")
+    r = client.patch(f"/api/blocks/{text['id']}", headers=h, json={"label": "Picture"})
+    assert r.status_code == 200 and r.json()["label"] == "Picture" and r.json()["has_crop"]
+    assert client.get(f"/api/blocks/{text['id']}/crop", headers=h).status_code == 200
+    assert client.patch(f"/api/blocks/{text['id']}", headers=h, json={"label": "Script"}).status_code == 422
+    other = next(b for b in page["blocks"] if b["id"] != text["id"])
+    assert client.delete(f"/api/blocks/{other['id']}", headers=h).status_code == 204
+    ids = [b["id"] for b in client.get(f"/api/documents/{doc['id']}/pages/0", headers=h).json()["blocks"]]
+    assert other["id"] not in ids and text["id"] in ids
+    # un autre utilisateur ne peut rien supprimer
+    make_user("bob")
+    hb = login("bob")
+    assert client.delete(f"/api/blocks/{text['id']}", headers=hb).status_code == 404

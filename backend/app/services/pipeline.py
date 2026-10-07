@@ -26,7 +26,8 @@ log = logging.getLogger("ocr.pipeline")
 RENDER_DPI = 200
 TEXT_SKIP = VISUAL_LABELS | {"Stamp"}
 
-OPTION_DEFAULTS = {"preprocess": "auto", "llm": "off", "review": False, "ollama_model": None, "llm_all": False}
+OPTION_DEFAULTS = {"preprocess": "auto", "llm": "off", "review": False, "ollama_model": None, "llm_all": False,
+                   "font": None}
 
 
 def doc_options(doc: Document) -> dict:
@@ -74,7 +75,8 @@ def render_and_preprocess(db: Session, doc: Document) -> None:
                 p1, r1 = storage.new_path("pages", doc.user_id, doc.id, ".jpg")
                 p2, r2 = storage.new_path("pages", doc.user_id, doc.id, ".png")
                 cv2.imwrite(str(p1), color, [cv2.IMWRITE_JPEG_QUALITY, 90])
-                cv2.imwrite(str(p2), cv2.cvtColor(pre_rgb, cv2.COLOR_RGB2GRAY))
+                # Image pour l'OCR sans perte (le JPEG abîme les traits fins de l'arabe) ; effacée en fin de job.
+                cv2.imwrite(str(p2), cv2.cvtColor(pre_rgb, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_PNG_COMPRESSION, 1])
                 page.width, page.height = color.shape[1], color.shape[0]
                 page.image_path, page.preprocessed_path, page.status = r1, r2, "rendered"
             except Exception as e:  # noqa: BLE001
@@ -171,7 +173,8 @@ def to_models(doc: Document) -> list[PageModel]:
         if p.status != "ocr_done":
             continue
         blocks = [BlockModel(b.label, b.html_current, tuple(b.bbox), b.direction,
-                             str(storage.resolve(b.crop_path)) if b.crop_path else None) for b in p.blocks]
+                             str(storage.resolve(b.crop_path)) if b.crop_path else None, b.style)
+                  for b in sorted(p.blocks, key=lambda x: x.reading_order)]
         out.append(PageModel(p.width, p.height, blocks, p.dpi))
     return out
 
@@ -181,7 +184,10 @@ def export_docx(db: Session, doc: Document) -> Export:
     models = to_models(doc)
     repeated = document_model.repeated_headers(doc)
     path, rel = storage.new_path("exports", doc.user_id, doc.id, ".docx")
-    DocxBuilder(models, Options(), repeated).save(path)
+    opts = Options(arabic_font=app_settings.get_setting(db, "docx_arabic_font"),
+                   latin_font=doc_options(doc)["font"] or app_settings.get_setting(db, "docx_latin_font"),
+                   columns=app_settings.get_setting(db, "docx_columns"))
+    DocxBuilder(models, opts, repeated).save(path)
     for old in list(doc.exports):  # un seul export courant : le précédent est effacé réellement
         try:
             storage.resolve(old.path).unlink(missing_ok=True)

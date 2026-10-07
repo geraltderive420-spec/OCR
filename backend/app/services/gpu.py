@@ -89,8 +89,11 @@ class LlamaServer:
 
     def _llama_cmd(self) -> list[str]:
         model, mmproj = _gguf_paths()
+        s = get_settings()
+        parallel = max(1, s.llama_parallel)
         cmd = [str(find_binary()), "-m", model, "--mmproj", mmproj, "-ngl", os.environ.get("LLAMA_CPP_NGL", "99"),
-               "--host", "127.0.0.1", "--port", str(self.port), "--parallel", "1", "--ctx-size", str(CTX_SIZE),
+               "--host", "127.0.0.1", "--port", str(self.port), "--parallel", str(parallel),
+               "--ctx-size", str(CTX_SIZE * parallel),  # le contexte est partagé entre les slots
                "--alias", MODEL_ALIAS, "--jinja"]
         if os.environ.get("LLAMA_CPP_NO_MMPROJ_OFFLOAD", "").lower() in {"1", "true"}:
             cmd.append("--no-mmproj-offload")

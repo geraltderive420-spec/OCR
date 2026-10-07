@@ -130,6 +130,8 @@ class Block(Base):
     direction: Mapped[str] = mapped_column(String(3), default="ltr")
     to_check: Mapped[bool] = mapped_column(Boolean, default=False)  # « à vérifier »
     error: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Mesures typographiques sur l'image (taille en pt, gras, alignement) : aucune donnée de contenu.
+    style: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     page: Mapped[Page] = relationship(back_populates="blocks")
     corrections: Mapped[list["Correction"]] = relationship(back_populates="block", cascade="all, delete-orphan")

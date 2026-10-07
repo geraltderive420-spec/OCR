@@ -66,3 +66,46 @@ def detect_stamps(bgr: np.ndarray, visual_boxes: list[tuple], text_boxes: list[t
         if not any(_iou_contains(s.bbox, k.bbox) > 0.9 for k in kept):
             kept.append(s)
     return kept
+
+
+def erase_stamps(bgr: np.ndarray, max_aspect: float = 3.0) -> tuple[np.ndarray, list[StampBox]]:
+    """Copie de la page où l'encre bleue / rouge des tampons est remplacée par le papier.
+
+    Sert uniquement à la LECTURE : un tampon posé sur du texte le rend illisible pour le modèle (« JOURNAL OFFICE
+    PAMPON ») ou le fait classer comme image (texte jamais lu). L'image d'origine, tampons compris, reste celle des
+    découpes et du Word. Seules les zones compactes sont effacées (tampons, signatures) : une ligne manuscrite
+    allongée au stylo bleu (formulaire rempli) n'est pas touchée.
+    """
+    stamps = [s for s in detect_stamps(bgr, [], [])
+              if (s.bbox[2] - s.bbox[0]) <= max_aspect * (s.bbox[3] - s.bbox[1])
+              and (s.bbox[3] - s.bbox[1]) <= max_aspect * (s.bbox[2] - s.bbox[0])]
+    if not stamps:
+        return bgr, []
+    zone = np.zeros(bgr.shape[:2], bool)
+    for s in stamps:
+        x0, y0, x1, y1 = (int(v) for v in s.bbox)
+        zone[y0:y1, x0:x1] = True
+    # Encre colorée, bords pâles compris : un canal nettement au-dessus des deux autres.
+    b_, g_, r_ = (bgr[..., i].astype(np.int16) for i in range(3))
+    tint = np.maximum(b_ - np.maximum(g_, r_), r_ - np.maximum(g_, b_))
+    mask = (tint > 18) & zone
+    if not mask.any():
+        return bgr, stamps
+    # Bords anticrénelés (mi-encre, mi-papier) : sinon un contour gris du tampon reste visible.
+    mask = cv2.dilate(mask.astype(np.uint8), np.ones((5, 5), np.uint8)).astype(bool) & zone
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    out = bgr.copy()
+    # Papier : teinte médiane des pixels clairs non colorés de la zone.
+    plain = zone & ~mask & (gray > np.percentile(gray[zone], 50))
+    paper = np.median(bgr[plain], axis=0).astype(np.float32) if plain.any() else np.full(3, 255, np.float32)
+    # Une encre colorée laisse passer sa propre couleur : dans le canal le plus clair (corrigé de la teinte du
+    # papier), le tampon disparaît presque, alors que le texte noir qu'il recouvre reste sombre. Pas de trous dans
+    # les lettres, contrairement à un simple remplacement par le papier.
+    px = bgr[mask].astype(np.float32) / np.maximum(paper, 1)
+    level = float(paper.mean())
+    v = np.clip(px.max(axis=1) * level, 0, 255)
+    pale = v > 0.75 * level  # trace pâle du tampon → papier ; le texte recouvert reste sombre
+    fill = np.repeat(v[:, None], 3, axis=1).astype(np.uint8)
+    fill[pale] = paper.astype(np.uint8)
+    out[mask] = fill
+    return out, stamps

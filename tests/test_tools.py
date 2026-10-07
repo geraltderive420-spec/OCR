@@ -138,3 +138,12 @@ def test_mots_insensibles_a_lordre():
     wo = evaluate.word_overlap("un deux trois quatre", "quatre trois deux un")
     assert wo == {"rappel_mots": 1.0, "precision_mots": 1.0}
     assert evaluate.cer("un deux trois quatre", "quatre trois deux un") > 0.5  # le CER, lui, s'effondre
+
+
+def test_mesure_par_caracteres_insensible_aux_artefacts_de_reference():
+    # la couche texte d'un PDF coupe les mots arabes et utilise les chiffres arabes-indiens
+    ref = "رشي د ب ن ناص ر، ممث ل الوزارة – ٩ جمادى ١٤٤١"
+    hyp = "رشيد بن ناصر، ممثل الوزارة — 9 جمادى 1441"
+    assert evaluate.word_overlap(ref, hyp)["rappel_mots"] < 0.5
+    m = evaluate.ngram_overlap(ref, hyp)
+    assert m["rappel_car"] == 1.0 and m["precision_car"] == 1.0

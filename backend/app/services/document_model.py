@@ -15,10 +15,11 @@ import numpy as np
 from sqlalchemy.orm import Session
 
 from app.models import Block, Document, Page
-from app.services import storage
-from app.services.ocr import VISUAL_LABELS, OcrPage
+from app.services import storage, typography
+from app.services.ocr import TABLE_LABELS, VISUAL_LABELS, OcrPage
 from app.services.ocr.html_utils import direction_of, to_text
-from app.services.stamps import detect_stamps
+from app.services.ocr.layout_refine import snap_to_ink
+from app.services.stamps import detect_stamps, erase_stamps
 
 LOW_CONFIDENCE = 0.7
 HEADER_LABELS = {"PageHeader", "PageFooter"}
@@ -47,6 +48,9 @@ def save_blocks(db: Session, doc: Document, page: Page, ocr: OcrPage, original_b
     blocks: list[Block] = []
     visual_boxes = []
     text_boxes = []
+    gray = cv2.cvtColor(original_bgr, cv2.COLOR_BGR2GRAY)
+    # Mesures typographiques sans l'encre des tampons (un tampon sur un paragraphe fausserait la taille des lignes).
+    gray_text = cv2.cvtColor(erase_stamps(original_bgr)[0], cv2.COLOR_BGR2GRAY)
     for i, b in enumerate(ocr.blocks):
         text = to_text(b.html)
         blk = Block(
@@ -56,17 +60,21 @@ def save_blocks(db: Session, doc: Document, page: Page, ocr: OcrPage, original_b
             to_check=b.error or (b.confidence is not None and b.confidence < LOW_CONFIDENCE and b.label not in VISUAL_LABELS),
         )
         if b.label in VISUAL_LABELS:
-            visual_boxes.append(tuple(b.bbox))
-            _save_crop(blk, doc, original_bgr)
+            blk.bbox = [round(v, 1) for v in snap_to_ink(gray, tuple(b.bbox))]  # boîte du modèle souvent rognée
+            visual_boxes.append(tuple(blk.bbox))
+            save_crop(blk, doc, original_bgr)
         else:
             text_boxes.append(tuple(b.bbox))
+            if b.label not in TABLE_LABELS and text:
+                blk.style = typography.analyze_block(gray_text, b.bbox, page.dpi or 200, blk.direction)
         blocks.append(blk)
+    typography.mark_bold([blk.style for blk in blocks], [len(to_text(blk.html_current)) for blk in blocks])
 
     # Tampons et signatures non reconnus comme images par le modèle.
     for st in detect_stamps(original_bgr, visual_boxes, text_boxes):
         blk = Block(page_id=page.id, reading_order=len(blocks), label="Stamp", bbox=[round(v, 1) for v in st.bbox],
                     html_ocr="", html_current="", confidence=None, direction="ltr", to_check=st.overlaps_text)
-        _save_crop(blk, doc, original_bgr)
+        save_crop(blk, doc, original_bgr)
         blocks.append(blk)
 
     # Les tampons s'insèrent dans l'ordre de lecture d'après leur position verticale.
@@ -89,7 +97,7 @@ def save_blocks(db: Session, doc: Document, page: Page, ocr: OcrPage, original_b
     return ordered
 
 
-def _save_crop(blk: Block, doc: Document, original_bgr: np.ndarray) -> None:
+def save_crop(blk: Block, doc: Document, original_bgr: np.ndarray) -> None:
     crop = _crop(original_bgr, blk.bbox)
     if crop is None:
         return
@@ -101,7 +109,7 @@ def _save_crop(blk: Block, doc: Document, original_bgr: np.ndarray) -> None:
 
 
 def repeated_headers(doc: Document) -> dict[str, str]:
-    """{'PageHeader': html, 'PageFooter': html} si le même en-tête / pied revient sur ≥ 2 pages (ou 1 seule page)."""
+    """{'PageHeader': html, 'PageFooter': html} si le même en-tête / pied revient sur au moins 2 pages."""
     out: dict[str, str] = {}
     if not doc.pages:
         return out
@@ -115,6 +123,6 @@ def repeated_headers(doc: Document) -> dict[str, str]:
                     counts[key] = (n + 1, html)
         if counts:
             key, (n, html) = max(counts.items(), key=lambda kv: kv[1][0])
-            if n >= 2 or len(doc.pages) == 1:
+            if n >= 2:  # répété : vrai en-tête Word ; sinon (lettre d'une page) il reste à sa place dans le corps
                 out[label] = html
     return out

@@ -6,6 +6,9 @@ Désactivé par défaut (GPU requis, plusieurs minutes). Pour le lancer :
     set OCR_LLAMA_CPP_DIR=C:\\LLAMA.CPP.CUDA\\llama.cpp\\build\\bin\\Release
     python -m pytest tests/test_real_surya.py -s
 
+Facultatif : OCR_TEST_PAGES (pages de samples/degrades/delave_ref, séparées par des virgules) et
+OCR_TEST_DOCX_OUT (chemin où enregistrer le Word produit, pour le contrôler à l'œil).
+
 N'utilise que des documents non confidentiels (samples/degrades). Aucun texte reconnu n'est affiché : seulement des comptes.
 """
 import io
@@ -47,7 +50,9 @@ def test_pipeline_reel_surya2(client, make_user, login, monkeypatch):
 
     make_user()
     h = login()
-    names = sorted(p.name for p in SAMPLES.glob("*.png"))[:2]
+    # OCR_TEST_PAGES="A2010001_p019.png,F2020001_p015.png" pour choisir les pages (défaut : les deux premières).
+    chosen = os.environ.get("OCR_TEST_PAGES")
+    names = chosen.split(",") if chosen else sorted(p.name for p in SAMPLES.glob("*.png"))[:2]
     assert names
     doc = upload(client, h, images_to_pdf(names), review=False).json()
 
@@ -75,6 +80,8 @@ def test_pipeline_reel_surya2(client, make_user, login, monkeypatch):
     assert len(blocks) >= 2
     out = client.get(f"/api/documents/{doc['id']}/export.docx", headers=h)
     assert out.status_code == 200 and out.content[:2] == b"PK"
+    if os.environ.get("OCR_TEST_DOCX_OUT"):  # contrôle visuel du Word produit (échantillons publics seulement)
+        Path(os.environ["OCR_TEST_DOCX_OUT"]).write_bytes(out.content)
     # llama-server est bien arrêté : le port est libre
     import socket
 

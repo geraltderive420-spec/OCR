@@ -7,6 +7,15 @@ import { fr, label } from "../i18n/fr";
 import { ErrorMessage, Loading, useAuthedImage } from "./common";
 
 const VISUAL = new Set(["Picture", "Figure", "Diagram", "Image", "Stamp"]);
+// Types qu'on peut attribuer à un bloc mal détecté (miroir de EDITABLE_LABELS côté serveur).
+const EDITABLE = ["Text", "SectionHeader", "ListItem", "Caption", "Footnote", "PageHeader", "PageFooter", "Table", "Picture", "Stamp"];
+
+function kind(lbl: string): string {
+  if (VISUAL.has(lbl)) return "visual";
+  if (lbl === "Table") return "table";
+  if (lbl === "SectionHeader" || lbl === "PageHeader" || lbl === "PageFooter") return "title";
+  return "text";
+}
 
 export default function Review({ doc }: { doc: DocDetail }) {
   const qc = useQueryClient();
@@ -21,6 +30,8 @@ export default function Review({ doc }: { doc: DocDetail }) {
   const imgUrl = useAuthedImage(q.data?.image_url ?? null);
   const replaceBlock = (b: BlockData) =>
     qc.setQueryData<PageData>(key, (p) => (p ? { ...p, blocks: p.blocks.map((x) => (x.id === b.id ? b : x)) } : p));
+  const removeBlock = (id: number) =>
+    qc.setQueryData<PageData>(key, (p) => (p ? { ...p, blocks: p.blocks.filter((x) => x.id !== id) } : p));
   const refreshDoc = () => qc.invalidateQueries({ queryKey: ["document", doc.id] });
 
   const blocks = useMemo(() => (q.data?.blocks ?? []).filter((b) => !onlyToCheck || b.to_check || b.corrections.some((c) => c.status === "proposed")), [q.data, onlyToCheck]);
@@ -54,7 +65,7 @@ export default function Review({ doc }: { doc: DocDetail }) {
                     <rect
                       key={b.id}
                       x={b.bbox[0]} y={b.bbox[1]} width={b.bbox[2] - b.bbox[0]} height={b.bbox[3] - b.bbox[1]}
-                      className={`box ${b.to_check ? "check" : ""} ${hover === b.id ? "hover" : ""} ${selected === b.id ? "sel" : ""}`}
+                      className={`box ${kind(b.label)} ${b.to_check ? "check" : ""} ${hover === b.id ? "hover" : ""} ${selected === b.id ? "sel" : ""}`}
                       onMouseEnter={() => setHover(b.id)} onMouseLeave={() => setHover(null)}
                       onClick={() => setSelected(b.id)}
                     />
@@ -77,6 +88,10 @@ export default function Review({ doc }: { doc: DocDetail }) {
                   replaceBlock(nb);
                   refreshDoc();
                 }}
+                onDelete={() => {
+                  removeBlock(b.id);
+                  refreshDoc();
+                }}
               />
             ))}
             {blocks.length === 0 && <p className="muted">—</p>}
@@ -87,8 +102,9 @@ export default function Review({ doc }: { doc: DocDetail }) {
   );
 }
 
-function BlockCard({ block, active, onHover, onSelect, onChange }: {
-  block: BlockData; active: boolean; onHover: (id: number | null) => void; onSelect: (id: number) => void; onChange: (b: BlockData) => void;
+function BlockCard({ block, active, onHover, onSelect, onChange, onDelete }: {
+  block: BlockData; active: boolean; onHover: (id: number | null) => void; onSelect: (id: number) => void;
+  onChange: (b: BlockData) => void; onDelete: () => void;
 }) {
   const [version, setVersion] = useState(0);
   const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
@@ -106,6 +122,17 @@ function BlockCard({ block, active, onHover, onSelect, onChange }: {
   const verified = useMutation({
     mutationFn: () => api.patch<BlockData>(`/blocks/${block.id}`, { to_check: false }),
     onSuccess: onChange,
+  });
+  const relabel = useMutation({
+    mutationFn: (lbl: string) => api.patch<BlockData>(`/blocks/${block.id}`, { label: lbl }),
+    onSuccess: (b) => {
+      setVersion((v) => v + 1);
+      onChange(b);
+    },
+  });
+  const remove = useMutation({
+    mutationFn: () => api.del<void>(`/blocks/${block.id}`),
+    onSuccess: onDelete,
   });
   const act = useMutation({
     mutationFn: ({ c, what }: { c: Correction; what: "accept" | "reject" }) => api.post<BlockData>(`/corrections/${c.id}/${what}`),
@@ -129,13 +156,30 @@ function BlockCard({ block, active, onHover, onSelect, onChange }: {
       onClick={() => onSelect(block.id)}
     >
       <header>
-        <span className="chip">{label(block.label)}</span>
+        <select
+          className="chip"
+          value={block.label}
+          title={fr.review.changeType}
+          aria-label={fr.review.changeType}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => relabel.mutate(e.target.value)}
+          disabled={relabel.isPending}
+        >
+          {(EDITABLE.includes(block.label) ? EDITABLE : [block.label, ...EDITABLE]).map((l) => <option key={l} value={l}>{label(l)}</option>)}
+        </select>
         {block.confidence !== null && <span className="muted">{fr.review.confidence} {Math.round(block.confidence * 100)} %</span>}
         {block.to_check && (
           <button className="chip warn" onClick={(e) => { e.stopPropagation(); verified.mutate(); }} title="Marquer comme vérifié">{fr.review.toCheck} ✓</button>
         )}
         <span className="spacer" />
         <span className="muted">{state === "saving" ? fr.review.saving : state === "saved" ? fr.review.saved : ""}</span>
+        <button
+          className="small"
+          title={fr.review.deleteBlock}
+          aria-label={fr.review.deleteBlock}
+          disabled={remove.isPending}
+          onClick={(e) => { e.stopPropagation(); if (window.confirm(fr.review.deleteConfirm)) remove.mutate(); }}
+        >✕</button>
       </header>
       {crop && <img className="crop" src={crop} alt={label(block.label)} />}
       {!VISUAL.has(block.label) && (
@@ -167,7 +211,7 @@ function BlockCard({ block, active, onHover, onSelect, onChange }: {
           </div>
         </div>
       ))}
-      <ErrorMessage error={save.error ?? act.error} />
+      <ErrorMessage error={save.error ?? act.error ?? relabel.error ?? remove.error} />
     </article>
   );
 }

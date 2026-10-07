@@ -42,8 +42,9 @@ def test_structure_de_base(tmp_path):
     # l'en-tête répété est un vrai en-tête Word, pas un paragraphe du corps
     assert "Ministère de test" in d.sections[0].header.paragraphs[0].text
     assert not any("Ministère de test" in p.text for p in d.paragraphs)
-    # saut de page entre les pages du scan
-    assert any('w:br w:type="page"' in p._p.xml or "w:type=\"page\"" in p._p.xml for p in d.paragraphs)
+    # saut de page entre les pages du scan (saut de section « nouvelle page »)
+    from docx.enum.section import WD_SECTION
+    assert len(d.sections) == 2 and d.sections[1].start_type == WD_SECTION.NEW_PAGE
 
 
 def test_tableau_fusions(tmp_path):
@@ -85,3 +86,105 @@ def test_page_vide_et_orientation_paysage(tmp_path):
     sec = Document(str(out)).sections[0]
     assert sec.page_width > sec.page_height
     DocxBuilder([]).save(tmp_path / "v.docx")  # aucun plantage sans page
+
+
+def _two_column_page(rtl=False):
+    w, h = 1654, 2339
+    txt = ("نص عربي طويل للتجربة " if rtl else "Texte de colonne assez long pour compter. ") * 8
+    d = "rtl" if rtl else "ltr"
+    left = [BlockModel("Text", txt, (150, 400 + 300 * k, 800, 650 + 300 * k), direction=d) for k in range(3)]
+    right = [BlockModel("Text", txt, (860, 400 + 300 * k, 1500, 650 + 300 * k), direction=d) for k in range(3)]
+    return PageModel(w, h, [
+        BlockModel("SectionHeader", "Titre pleine largeur", (150, 200, 1500, 300), direction=d),
+        *(right + left if rtl else left + right),
+        BlockModel("Text", "Signature pleine largeur " * 6, (150, 1400, 1500, 1500), direction=d),
+    ])
+
+
+def test_deux_colonnes_en_section_word(tmp_path):
+    out = tmp_path / "c.docx"
+    DocxBuilder([_two_column_page()]).save(out)
+    d = Document(str(out))
+    cols = [s._sectPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}cols") for s in d.sections]
+    nums = [c.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}num") for c in cols]
+    assert nums == ["1", "2", "1"]  # titre, colonnes, signature
+
+
+def test_colonnes_arabes_de_droite_a_gauche(tmp_path):
+    out = tmp_path / "a.docx"
+    DocxBuilder([_two_column_page(rtl=True)]).save(out)
+    d = Document(str(out))
+    assert "<w:bidi/>" in d.sections[1]._sectPr.xml
+
+
+def test_colonnes_desactivees(tmp_path):
+    from app.services.docx_builder import Options
+    out = tmp_path / "u.docx"
+    DocxBuilder([_two_column_page()], Options(columns=False)).save(out)
+    assert len(Document(str(out)).sections) == 1
+
+
+def test_mesures_typographiques_appliquees(tmp_path):
+    w, h = 1654, 2339
+    pages = [PageModel(w, h, [
+        BlockModel("SectionHeader", "Un titre", (200, 100, 1400, 180), style={"pt": 15.6, "bold": True, "align": "center"}),
+        BlockModel("Text", "Corps du texte. " * 20, (200, 200, 1450, 600), style={"pt": 10.2, "align": "justify"}),
+        BlockModel("Text", "Note en petit. " * 5, (200, 700, 1450, 760), style={"pt": 7.1}),
+    ])]
+    out = tmp_path / "t.docx"
+    DocxBuilder(pages).save(out)
+    d = Document(str(out))
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    title, body, note = [p for p in d.paragraphs if p.text.strip()]
+    assert title.runs[0].font.size.pt == 16 and title.runs[0].bold and title.alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert body.runs[0].font.size.pt == 10 and body.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY
+    assert note.runs[0].font.size.pt == 7
+    assert body.runs[0]._r.rPr.rFonts.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}ascii") == "Arial"
+
+
+def test_blocs_etroits_centres_sans_colonnes(tmp_path):
+    w, h = 1654, 2339
+    txt = "Ligne centrée assez longue pour dépasser le seuil de texte. " * 3
+    page = PageModel(w, h, [BlockModel("Text", txt, (500, 300 + 150 * k, 1150, 420 + 150 * k)) for k in range(4)]
+                     + [BlockModel("Text", "Pleine largeur " * 10, (150, 1200, 1500, 1300))])
+    out = tmp_path / "n.docx"
+    DocxBuilder([page]).save(out)
+    assert len(Document(str(out)).sections) == 1
+
+
+def test_taille_aberrante_ramenee_au_corps(tmp_path):
+    w, h = 1654, 2339
+    pages = [PageModel(w, h, [
+        BlockModel("Text", "Corps du texte. " * 30, (200, 200, 1450, 600), style={"pt": 10.1}),
+        BlockModel("Text", "Nom sous une signature", (200, 700, 900, 900), style={"pt": 27.0}),
+    ])]
+    out = tmp_path / "s.docx"
+    DocxBuilder(pages).save(out)
+    sizes = [p.runs[0].font.size.pt for p in Document(str(out)).paragraphs if p.text.strip()]
+    assert sizes == [10, 10]
+
+
+def test_blocs_cote_a_cote_en_rangee_et_mise_en_forme_mesuree(tmp_path):
+    """Lettre : en-tête français / arabe côte à côte, titre sur deux lignes, signature à droite soulignée."""
+    w, h = 2339, 1654
+    page = PageModel(w, h, [
+        BlockModel("PageHeader", "ETABLISSEMENT DE LA PLATEFORME", (430, 30, 1080, 100), style={"cap_px": 21, "lines": 1}),
+        BlockModel("PageHeader", "مؤسسة قاعدة المنظومات", (1570, 30, 1930, 100), direction="rtl", style={"cap_px": 23, "lines": 1}),
+        BlockModel("SectionHeader", "MONSIEUR, LE DIRECTEUR DU DPR-SEF", (890, 420, 1460, 510),
+                   style={"cap_px": 30, "lines": 2, "align": "center", "bold": True, "line_w": [0.38, 0.94]}),
+        BlockModel("Text", "Suite au disfonctionnement des groupes. " * 8, (423, 764, 1932, 1006),
+                   style={"cap_px": 26, "lines": 5, "align": "justify", "indent": 0.09, "pitch_px": 48}),
+        BlockModel("Text", "LE DIRECTEUR GENERAL DE L'EPIC-PSE/2°RM", (1347, 1072, 1870, 1169),
+                   style={"cap_px": 29, "lines": 2, "align": "center", "bold": True, "underline": True, "line_w": [0.93, 0.74]}),
+    ])
+    out = tmp_path / "lettre.docx"
+    DocxBuilder([page]).save(out)
+    d = Document(str(out))
+    assert len(d.tables) == 1 and len(d.tables[0].columns) == 2  # en-tête côte à côte
+    assert "ETABLISSEMENT" in d.tables[0].cell(0, 0).text and "مؤسسة" in d.tables[0].cell(0, 1).text
+    paras = [p for p in d.paragraphs if p.text.strip()]
+    title, body, sign = paras
+    assert "<w:br/>" in title._p.xml and title.runs[0].bold  # deux lignes
+    assert body.paragraph_format.first_line_indent.cm > 0.5 and body.paragraph_format.line_spacing >= 1.2
+    assert sign.runs[0].underline and sign.paragraph_format.left_indent.cm > 8  # à droite de la page
+    assert sign.runs[0].font.size.pt == 14 and body.runs[0].font.size.pt == 12

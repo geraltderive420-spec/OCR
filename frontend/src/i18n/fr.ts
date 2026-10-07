@@ -31,11 +31,14 @@ export const fr = {
     drop: "Choisissez un PDF (max {mb} Mo, {pages} pages)",
     preprocess: "Qualité du scan",
     preprocessOptions: {
-      auto: "Automatique (recommandé)",
+      auto: "Automatique (recommandé : redressement seul)",
       leger: "Scan net",
       delave: "Scan délavé",
       tres_delave: "Scan très délavé",
     } as Record<string, string>,
+    font: "Police du texte dans le Word",
+    fontDefault: "{name} (par défaut)",
+    fontHelp: "Celle du document d'origine : Arial pour la plupart des courriers, Times New Roman pour le Journal officiel.",
     llm: "Correction des erreurs par l'IA",
     llmOptions: {
       off: "Sans correction",
@@ -86,6 +89,9 @@ export const fr = {
     saved: "Enregistré",
     saving: "Enregistrement…",
     onlyToCheck: "Seulement les blocs à vérifier",
+    changeType: "Type du bloc (corriger une détection fausse)",
+    deleteBlock: "Supprimer ce bloc",
+    deleteConfirm: "Supprimer ce bloc du document ? (détection fausse, doublon, bruit)",
     image: "Image",
     labels: {
       Text: "Texte", SectionHeader: "Titre", PageHeader: "En-tête", PageFooter: "Pied de page", Table: "Tableau",
@@ -124,6 +130,9 @@ export const fr = {
         gpu_idle_unload_minutes: "Arrêter l'OCR après inactivité (minutes)",
         gpu_min_free_mb: "VRAM libre requise pour démarrer l'OCR (Mo)",
         session_idle_minutes: "Expiration de session après inactivité (minutes)",
+        docx_latin_font: "Police du texte latin dans le Word",
+        docx_arabic_font: "Police du texte arabe dans le Word",
+        docx_columns: "Reproduire les pages en deux colonnes dans le Word",
       } as Record<string, string>,
     },
     services: {

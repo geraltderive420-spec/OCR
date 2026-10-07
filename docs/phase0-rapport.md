@@ -27,6 +27,10 @@ ici). Aucun document confidentiel n'a été utilisé ; les rapports ne contienne
 ## Constats
 
 1. **L'arabe reste le point faible** : ~70 % des mots avec Surya, et c'est vrai aussi sur pages propres (73 % pour Surya 1).
+   **Correction du 07/10/2026 : ce chiffre est un artefact de mesure.** La référence (couche texte des PDF) coupe les mots
+   arabes (« رشي د ب ن ناص ر »), utilise les chiffres arabes-indiens et d'autres tirets. Avec la mesure par trigrammes de
+   caractères normalisés (`rappel_car` de `evaluate.py`), la même page arabe passe de 51 % (mots) à 95,6 % : la lecture
+   de l'arabe est bonne sur ces échantillons.
    PaddleOCR-VL est nettement pire (54 %, avec une boucle de génération sur une page) : abandonné.
 2. **La dégradation « délavé » coûte peu en lecture du texte** (2 à 3 points de mots) **mais beaucoup en mise en page** pour
    Surya 1 (5 tableaux au lieu de 11, faux `Handwriting`). Surya 2 y résiste (11 tableaux, aucun `Handwriting`).

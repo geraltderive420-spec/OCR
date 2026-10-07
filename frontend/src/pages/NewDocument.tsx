@@ -16,6 +16,7 @@ export default function NewDocument() {
   const [model, setModel] = useState("");
   const [llmAll, setLlmAll] = useState(false);
   const [review, setReview] = useState(true);
+  const [font, setFont] = useState("");
 
   const upload = useMutation({
     mutationFn: () => {
@@ -25,6 +26,7 @@ export default function NewDocument() {
       f.append("llm", llm);
       f.append("review", String(review));
       f.append("llm_all", String(llmAll));
+      if (font) f.append("font", font);
       if (llm !== "off" && model) f.append("ollama_model", model);
       return api.upload<DocSummary>("/documents", f);
     },
@@ -51,6 +53,14 @@ export default function NewDocument() {
           <select value={preprocess} onChange={(e) => setPreprocess(e.target.value)}>
             {Object.entries(fr.newDoc.preprocessOptions).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
+        </label>
+        <label>
+          {fr.newDoc.font}
+          <select value={font} onChange={(e) => setFont(e.target.value)}>
+            <option value="">{t(fr.newDoc.fontDefault, { name: o?.default_font ?? "" })}</option>
+            {o?.fonts.filter((f) => f !== o.default_font).map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+          <small className="muted">{fr.newDoc.fontHelp}</small>
         </label>
         <label>
           {fr.newDoc.llm}

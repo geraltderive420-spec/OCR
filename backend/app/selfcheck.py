@@ -87,6 +87,13 @@ def run_checks() -> list[Result]:
             add(OK, "llama-server présent") if find_binary() else None
             _gguf_paths()
             add(OK, "Modèles GGUF de Surya 2 présents dans le cache local")
+            if s.layout_refine:
+                from platformdirs import user_cache_dir
+
+                det = Path(user_cache_dir("datalab")) / "models" / "text_detection"
+                found = det.is_dir() and any(p.is_file() for p in det.rglob("*"))
+                add(OK if found else WARN, "Détecteur de lignes présent (recalage de la mise en page)" if found else
+                    "Détecteur de lignes absent du cache datalab : la mise en page ne sera pas recalée (voir build-bundle.ps1)")
             vram = free_vram_mb()
             add(OK if vram is not None else WARN, f"VRAM libre : {vram} Mo" if vram is not None else "GPU non détecté (nvidia-smi)")
         except Exception as e:  # noqa: BLE001

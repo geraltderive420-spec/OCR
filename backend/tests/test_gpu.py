@@ -131,3 +131,26 @@ def test_moteur_mal_configure_echoue_clairement(client, make_user, login, monkey
     assert runner.Worker().run_once()
     d = client.get(f"/api/documents/{doc['id']}", headers=h).json()
     assert d["status"] == "failed" and "mal configuré" in d["error"]
+
+
+def test_serveur_arrete_si_surya_ne_demarre_pas(monkeypatch):
+    """Si Surya échoue après le lancement de llama-server, le serveur est arrêté (sinon : port occupé, attente sans fin)."""
+    import pytest
+    from app.services.ocr.surya2 import Surya2Engine
+
+    class FakeServer:
+        started = stopped = False
+        base_url = "http://127.0.0.1:1/v1"
+
+        def start(self):
+            self.started = True
+
+        def stop(self):
+            self.stopped = True
+
+    srv = FakeServer()
+    eng = Surya2Engine(server=srv)
+    monkeypatch.setattr(Surya2Engine, "_load", lambda self: (_ for _ in ()).throw(ImportError("surya")))
+    with pytest.raises(ImportError):
+        eng.start()
+    assert srv.started and srv.stopped and eng._rec is None

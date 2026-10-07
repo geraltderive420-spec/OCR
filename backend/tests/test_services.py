@@ -231,3 +231,15 @@ def test_compte_de_developpement(app_env, client, monkeypatch):
     monkeypatch.setenv("OCR_COOKIE_SECURE", "true")  # production : refusé
     config.reset_settings_cache()
     assert cli.main(["seed-dev"]) == 3
+
+
+def test_profil_auto_redresse_sans_alterer_l_image():
+    page = text_page()
+    color, for_ocr, used, _ = preprocess.process_page(page, "auto")
+    assert used == "aucun"
+    assert (cv2.cvtColor(for_ocr, cv2.COLOR_RGB2BGR) == color).all()
+
+
+def test_budget_de_tokens_des_blocs():
+    from app.services.ocr.surya2 import token_budget
+    assert token_budget(50) == 350 and token_budget(1000) == 2000

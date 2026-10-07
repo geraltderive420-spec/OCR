@@ -1,5 +1,10 @@
 """Prétraitement d'image (PLAN.md §7) : redressement, normalisation du fond, CLAHE, débruitage, netteté.
 
+Mesure (Surya 2, pages arabes « délavé », 07/10/2026) : un modèle de vision lit MIEUX l'image d'origine que l'image
+améliorée (binarisation et CLAHE effacent les points et les traits fins de l'arabe : jusqu'à -7 points de mots
+retrouvés et -10 points de précision). Le profil « auto » se contente donc de redresser la page ; les profils
+explicites restent disponibles pour les scans extrêmes.
+
 Le redressement est appliqué à l'image couleur d'origine (qui sert aux découpes) *avant* le prétraitement :
 les deux images restent alignées pixel à pixel, donc les boîtes détectées sur l'image prétraitée sont
 valables sur l'image d'origine.
@@ -100,13 +105,16 @@ def enhance(gray: np.ndarray, profile: str) -> np.ndarray:
 
 
 def process_page(bgr: np.ndarray, profile: str = "auto") -> tuple[np.ndarray, np.ndarray, str, float]:
-    """Retourne (image couleur redressée, image prétraitée RGB, profil utilisé, angle appliqué)."""
+    """Retourne (image couleur redressée, image pour l'OCR en RGB, profil utilisé, angle appliqué).
+
+    « auto » : redressement seul (profil « aucun »), l'image pour l'OCR est l'image couleur redressée.
+    """
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     angle = estimate_skew(gray)
     bgr = rotate(bgr, angle)
-    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    used = choose_profile(gray) if profile == "auto" else profile
-    if used not in PARAMS:
-        raise ValueError(f"profil inconnu : {used}")
-    out = enhance(gray, used)
-    return bgr, cv2.cvtColor(out, cv2.COLOR_GRAY2RGB), used, angle
+    if profile in ("auto", "aucun"):
+        return bgr, cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), "aucun", angle
+    if profile not in PARAMS:
+        raise ValueError(f"profil inconnu : {profile}")
+    out = enhance(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), profile)
+    return bgr, cv2.cvtColor(out, cv2.COLOR_GRAY2RGB), profile, angle

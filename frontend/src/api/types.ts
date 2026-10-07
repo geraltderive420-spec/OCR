@@ -58,6 +58,8 @@ export interface Options {
   default_model: string;
   max_upload_mb: number;
   max_pages: number;
+  fonts: string[];
+  default_font: string;
 }
 
 export const ACTIVE_STATUSES = ["queued", "waiting_gpu", "preprocessing", "ocr", "correcting", "exporting"];

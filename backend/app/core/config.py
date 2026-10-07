@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     llama_cpp_dir: Path | None = None  # dossier Release de llama.cpp (contient llama-server.exe)
     llama_port: int = 8081
     gguf_repo: str = "datalab-to/surya-ocr-2-gguf"
+    # Requêtes OCR simultanées (blocs d'une page traités en parallèle). 1 sur 4 Go ; 2 à 4 sur une RTX 3060 12 Go :
+    # chaque slot ajoute un contexte de 16k tokens en VRAM.
+    llama_parallel: int = 1
+    # Recalage de la mise en page sur les lignes détectées (détecteur de lignes de Surya, poids dans le cache datalab).
+    layout_refine: bool = True
+    line_detector_device: str = "cpu"  # cpu (ne prend pas de VRAM) | cuda
+    # Lire la page sans l'encre bleue / rouge des tampons et signatures (repérés par leur couleur).
+    stamp_erase: bool = True
 
     # Worker
     worker_poll_seconds: float = 2.0

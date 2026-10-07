@@ -2,7 +2,10 @@
 
 Le builder ne dépend que de structures simples (`PageModel` / `BlockModel`) : testable sans base de données.
 Structure éditable : styles Titre, paragraphes, listes, vrais tableaux Word, en-tête / pied de page réels si répétés.
-Pas de zones de texte positionnées. Arabe : `w:bidi` sur le paragraphe, `w:rtl` sur les segments arabes,
+Pas de zones de texte positionnées ; les pages en deux colonnes deviennent des sections Word à deux colonnes.
+Taille, gras, soulignement, alignement, retraits, interligne et retours à la ligne viennent des mesures typographiques
+des blocs (`typography.py`) quand elles existent ; la position d'un bloc étroit (signature à droite, date) est rendue par
+ses retraits ; des blocs côte à côte (en-tête français / logo / arabe) deviennent une rangée de tableau sans bordures. Arabe : `w:bidi` sur le paragraphe, `w:rtl` sur les segments arabes,
 police « complex script » définie, `w:bidiVisual` sur les tableaux majoritairement arabes.
 """
 from __future__ import annotations
@@ -15,18 +18,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from docx import Document as DocxDocument
-from docx.enum.section import WD_ORIENT
+from docx.enum.section import WD_ORIENT, WD_SECTION
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Cm, Pt
+from docx.shared import Cm, Pt, RGBColor
 from lxml import html as lxml_html
 
 from app.services.ocr.html_utils import arabic_ratio, direction_of, to_text
+from app.services.typography import pt_from_cap
 
 VISUAL = {"Picture", "Figure", "Diagram", "Image", "Stamp"}
-SIZE_SCALE = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24]
+SIZE_SCALE = [7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28]
+SERIF_FONTS = {"times new roman", "cambria", "georgia", "garamond", "book antiqua", "palatino linotype", "century"}
+COL_SPACE_CM = 0.8
 ARABIC_RE = re.compile(r"[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]")
 LATIN_RE = re.compile(r"[A-Za-zÀ-ɏ]")
 
@@ -38,6 +44,7 @@ class BlockModel:
     bbox: tuple[float, float, float, float]
     direction: str = "ltr"
     crop_path: str | None = None  # chemin absolu d'une image
+    style: dict | None = None  # mesures typographiques (typography.analyze_block)
 
 
 @dataclass
@@ -50,8 +57,13 @@ class PageModel:
 
 @dataclass
 class Options:
-    arabic_font: str = "Arial"
-    latin_font: str = "Calibri"
+    arabic_font: str = "Simplified Arabic"
+    latin_font: str = "Arial"
+    columns: bool = True  # reproduire les pages en deux colonnes
+
+    @property
+    def family(self) -> str:
+        return "serif" if self.latin_font.strip().lower() in SERIF_FONTS else "sans"
 
 
 # ------------------------------------------------------------------ XML utilitaires
@@ -79,6 +91,20 @@ def _mark_rtl(run, size_pt: float, bold: bool) -> None:
     rpr.append(szcs)
     if bold:
         rpr.append(OxmlElement("w:bCs"))
+
+
+_AFTER_COLS = ("formProt", "vAlign", "noEndnote", "titlePg", "textDirection", "bidi", "rtlGutter", "docGrid",
+               "printerSettings", "sectPrChange")
+_AFTER_BIDI = _AFTER_COLS[_AFTER_COLS.index("bidi") + 1:]
+
+
+def _insert_before(parent, el, successors: tuple[str, ...]) -> None:
+    for name in successors:
+        nxt = parent.find(qn(f"w:{name}"))
+        if nxt is not None:
+            nxt.addprevious(el)
+            return
+    parent.append(el)
 
 
 def _bidi_paragraph(p) -> None:
@@ -183,6 +209,12 @@ class DocxBuilder:
         self.content_w_cm = 17.0
         self.body_pt = 11
         self._env_left = self._env_right = 0.0
+        self._cols = 1
+        self._col_mid = 0.5
+        self._target = self.doc  # conteneur courant : le document, ou une cellule de rangée
+        self._in_row = False
+        self._cell_w_cm = 0.0
+        self._prev_bottom: float | None = None  # bas du bloc précédent (px), pour l'espace vertical
 
     # --- mise en page
     def _setup_section(self) -> None:
@@ -194,7 +226,10 @@ class DocxBuilder:
         self.page_w_cm, self.page_h_cm = w, h
         lefts, rights, tops, bottoms = [], [], [], []
         for p in self.pages:
-            bs = [b.bbox for b in p.blocks if b.label not in ("PageHeader", "PageFooter")] or [b.bbox for b in p.blocks]
+            # Un en-tête / pied qui part dans le vrai en-tête Word ne compte pas ; sinon (lettre d'une page,
+            # en-tête non répété) il occupe le haut de la page et doit être dans les marges.
+            moved = {k for k in ("PageHeader", "PageFooter") if self.repeated.get(k)}
+            bs = [b.bbox for b in p.blocks if b.label not in moved] or [b.bbox for b in p.blocks]
             if not bs or not p.width or not p.height:
                 continue
             lefts.append(min(b[0] for b in bs) / p.width)
@@ -212,6 +247,12 @@ class DocxBuilder:
         self._env_right = 1 - (statistics.median(rights) if rights else 0.08)
 
     def _estimate_pt(self, b: BlockModel, page: PageModel) -> float | None:
+        if b.style and b.style.get("cap_px"):
+            # Rapport de l'arabe seulement pour un bloc vraiment arabe (une référence mixte reste en latin).
+            family = "arabic" if arabic_ratio(to_text(b.html)) > 0.7 else self.opt.family
+            return pt_from_cap(float(b.style["cap_px"]), page.dpi or 200, family)
+        if b.style and b.style.get("pt"):
+            return float(b.style["pt"])
         text = to_text(b.html)
         if len(text) < 3:
             return None
@@ -226,26 +267,60 @@ class DocxBuilder:
         return min(SIZE_SCALE, key=lambda s: abs(s - pt))
 
     def _body_size(self) -> int:
-        est = [self._estimate_pt(b, p) for p in self.pages for b in p.blocks if b.label == "Text"]
-        est = [e for e in est if e]
+        """Corps du texte courant : médiane des tailles pondérée par la longueur du texte."""
+        est = []
+        for p in self.pages:
+            for b in p.blocks:
+                if b.label == "Text" and (pt := self._estimate_pt(b, p)):
+                    est.extend([pt] * max(1, len(to_text(b.html)) // 50))
         return self._snap(statistics.median(est)) if est else 11
+
+    def _block_size(self, b: BlockModel, page: PageModel) -> float:
+        """Taille propre au bloc si elle s'écarte nettement du corps, sinon le corps (document homogène)."""
+        pt = self._estimate_pt(b, page) if b.style else None
+        if not pt:
+            return self.body_pt
+        snapped = self._snap(pt)
+        # Mesure aberrante (signature ou tampon sur le texte) : le corps fait foi.
+        if not 0.6 * self.body_pt <= snapped <= 2.0 * self.body_pt:
+            return self.body_pt
+        return snapped if abs(snapped - self.body_pt) >= 1 else self.body_pt
 
     def _alignment(self, b: BlockModel, page: PageModel):
         if not page.width:
             return None
+        measured = (b.style or {}).get("align")
+        if measured == "justify":
+            return WD_ALIGN_PARAGRAPH.JUSTIFY
+        if measured == "center":
+            return WD_ALIGN_PARAGRAPH.CENTER
+        if measured == "right":
+            return WD_ALIGN_PARAGRAPH.RIGHT
+        if self._in_row:
+            return None  # la cellule donne la position
         text = to_text(b.html)
         x0, x1 = b.bbox[0] / page.width, b.bbox[2] / page.width
-        env_w = max(0.1, self._env_right - self._env_left)
+        env_l, env_r = self._column_env(page, b)
+        env_w = max(0.1, env_r - env_l)
         width = (x1 - x0) / env_w
-        center_gap = abs((x0 + x1) / 2 - (self._env_left + self._env_right) / 2)
-        if len(text) < 140 and width < 0.8 and center_gap < 0.05:
+        center_gap = abs((x0 + x1) / 2 - (env_l + env_r) / 2)
+        if len(text) < 140 and width < 0.8 and center_gap < 0.05 * env_w / 0.84:
             return WD_ALIGN_PARAGRAPH.CENTER
-        if b.direction == "ltr" and (self._env_right - x1) < 0.03 and (x0 - self._env_left) > 0.35 and len(text) < 140:
+        if b.direction == "ltr" and (env_r - x1) < 0.03 and (x0 - env_l) > 0.35 * env_w and len(text) < 140:
             return WD_ALIGN_PARAGRAPH.RIGHT
         return None  # début de ligne : gauche (LTR) ou droite (RTL, par w:bidi)
 
     # --- runs
-    def _add_runs(self, p, segs: list[Seg], rtl_para: bool, size: float, bold_all: bool = False) -> None:
+    def _column_env(self, page: PageModel, b: BlockModel) -> tuple[float, float]:
+        """Bords (fractions de la largeur) de la colonne du bloc : la page entière hors section à deux colonnes."""
+        if self._cols == 2 and page.width:
+            if (b.bbox[0] + b.bbox[2]) / 2 / page.width < self._col_mid:
+                return self._env_left, self._col_mid
+            return self._col_mid, self._env_right
+        return self._env_left, self._env_right
+
+    def _add_runs(self, p, segs: list[Seg], rtl_para: bool, size: float, bold_all: bool = False,
+                  underline_all: bool = False) -> None:
         for seg in segs:
             if seg.br:
                 p.add_run().add_break(WD_BREAK.LINE)
@@ -257,7 +332,7 @@ class DocxBuilder:
                 run.font.size = Pt(size)
                 run.bold = seg.bold or bold_all or None
                 run.italic = seg.italic or None
-                run.underline = seg.underline or None
+                run.underline = seg.underline or underline_all or None
                 if script == "ar":
                     _set_fonts(run, self.opt.arabic_font, self.opt.arabic_font)
                     _mark_rtl(run, size, bool(run.bold))
@@ -265,38 +340,124 @@ class DocxBuilder:
                     _set_fonts(run, self.opt.latin_font, self.opt.arabic_font)
 
     def _paragraph(self, container, segs, direction: str, size: float, style: str | None = None,
-                   align=None, bold_all: bool = False):
+                   align=None, bold_all: bool = False, underline_all: bool = False, fmt: dict | None = None):
         p = container.add_paragraph(style=style) if style else container.add_paragraph()
         if direction == "rtl":
             _bidi_paragraph(p)
         if align is not None:
             p.alignment = align
-        p.paragraph_format.space_after = Pt(4)
-        self._add_runs(p, segs, direction == "rtl", size, bold_all)
+        pf = p.paragraph_format
+        pf.space_after = Pt(0) if fmt else Pt(4)
+        for key, value in (fmt or {}).items():
+            if value is not None:
+                setattr(pf, key, value)
+        self._add_runs(p, segs, direction == "rtl", size, bold_all, underline_all)
         return p
+
+    def _block_format(self, b: BlockModel, page: PageModel, size: float, first: bool) -> dict | None:
+        """Retraits (position du bloc, 1re ligne), interligne et espace avant, d'après la géométrie mesurée."""
+        st = b.style
+        if not st or not page.width:
+            return None
+        fmt: dict = {}
+        dpi = page.dpi or 200
+        if first and not self._in_row and self._prev_bottom is not None:
+            gap_pt = max(0.0, (b.bbox[1] - self._prev_bottom) * 72 / dpi)
+            fmt["space_before"] = Pt(min(72, round(gap_pt * 0.75)))  # un peu de marge : Word compose plus haut
+        if st.get("pitch_px") and st.get("lines", 1) >= 2:
+            ratio = st["pitch_px"] * 72 / dpi / (1.15 * size)  # Word : interligne simple ≈ 1,15 × corps
+            fmt["line_spacing"] = round(min(3.0, max(1.0, ratio)) * 20) / 20
+        if not self._in_row:
+            env_l, env_r = self._column_env(page, b)
+            env_w = max(0.1, env_r - env_l)
+            col_cm = self.content_w_cm if self._cols == 1 else (self.content_w_cm - COL_SPACE_CM) / 2
+            x0, x1 = b.bbox[0] / page.width, b.bbox[2] / page.width
+            left = max(0.0, (x0 - env_l) / env_w * col_cm)
+            right = max(0.0, (env_r - x1) / env_w * col_cm)
+            if b.direction == "rtl":
+                left, right = right, left  # paragraphe bidi : le retrait « gauche » de Word est à droite
+            if left > 0.4:
+                fmt["left_indent"] = Cm(round(left, 2))
+            if right > 0.4:
+                fmt["right_indent"] = Cm(round(right, 2))
+        if st.get("indent"):
+            width_cm = (b.bbox[2] - b.bbox[0]) / page.width * self.page_w_cm
+            fmt["first_line_indent"] = Cm(round(st["indent"] * width_cm, 2))
+            if st["indent"] < 0 and "left_indent" not in fmt:  # retrait suspendu : la 1re ligne dépasse à gauche
+                fmt["left_indent"] = Cm(round(-st["indent"] * width_cm, 2))
+            elif st["indent"] < 0:
+                fmt["left_indent"] = Cm(round(fmt["left_indent"].cm - st["indent"] * width_cm, 2))
+        return fmt
+
+    @staticmethod
+    def _with_breaks(b: BlockModel, paras: list[list[Seg]]) -> list[list[Seg]]:
+        """Retours à la ligne des titres, adresses et signatures (le modèle les fond en une seule ligne).
+
+        Les mots sont répartis entre les lignes au prorata de la largeur mesurée de chaque ligne.
+        """
+        st = b.style or {}
+        widths = st.get("line_w") or []
+        if (len(paras) != 1 or len(widths) < 2 or st.get("align") == "justify" or any(s.br for s in paras[0])
+                or len(widths) > 6 or sum(len(s.text) for s in paras[0]) > 300):
+            return paras
+        words: list[tuple[str, Seg]] = []
+        for seg in paras[0]:
+            for w in re.findall(r"\S+\s*", seg.text):
+                words.append((w, seg))
+        if len(words) < len(widths):
+            return paras
+        total_chars = sum(len(w) for w, _ in words)
+        total_w = sum(widths)
+        cuts, acc, k = set(), 0, 0
+        targets = [sum(widths[:i + 1]) / total_w * total_chars for i in range(len(widths) - 1)]
+        for i, (w, _) in enumerate(words[:-1]):
+            acc += len(w)
+            if k < len(targets) and acc + len(words[i + 1][0]) / 2 >= targets[k]:
+                cuts.add(i)
+                k += 1
+        out: list[Seg] = []
+        for i, (w, seg) in enumerate(words):
+            out.append(Seg(w.rstrip() if i in cuts else w, seg.bold, seg.italic, seg.underline))
+            if i in cuts:
+                out.append(Seg("", br=True))
+        return [out]
 
     # --- blocs
     def _heading(self, b: BlockModel, page: PageModel, rank: dict[int, int]) -> None:
         paras = parse_inline(b.html) or [[Seg(to_text(b.html))]]
         level = heading_level(b.html) or rank.get(id(b), 2)
         level = min(max(level, 1), 3)
-        size = {1: 18, 2: 14, 3: 12}[level]
-        for segs in paras:
-            self._paragraph(self.doc, segs, b.direction, size, style=f"Heading {level}", align=self._alignment(b, page))
+        measured = self._estimate_pt(b, page) if b.style else None
+        size = max(self._snap(measured), self.body_pt) if measured else {1: 18, 2: 14, 3: 12}[level]
+        bold = (b.style or {}).get("bold", True)
+        underline = bool((b.style or {}).get("underline"))
+        for k, segs in enumerate(self._with_breaks(b, paras)):
+            p = self._paragraph(self._target, segs, b.direction, size, style=f"Heading {level}", align=self._alignment(b, page),
+                                bold_all=bool(bold), underline_all=underline, fmt=self._block_format(b, page, size, k == 0))
+            for run in p.runs:  # le style « Titre » de Word impose sa couleur : on garde l'aspect du document
+                run.font.color.rgb = RGBColor(0, 0, 0)
+                if not bold:
+                    run.bold = False
 
     def _text(self, b: BlockModel, page: PageModel, style: str | None = None, size: float | None = None) -> None:
         paras = parse_inline(b.html)
-        size = size or self.body_pt
-        for segs in paras:
-            self._paragraph(self.doc, segs, b.direction, size, style=style, align=self._alignment(b, page))
+        size = size or self._block_size(b, page)
+        bold = bool((b.style or {}).get("bold"))
+        underline = bool((b.style or {}).get("underline"))
+        for k, segs in enumerate(self._with_breaks(b, paras)):
+            self._paragraph(self._target, segs, b.direction, size, style=style, align=self._alignment(b, page),
+                            bold_all=bold, underline_all=underline, fmt=self._block_format(b, page, size, k == 0))
 
     def _picture(self, b: BlockModel, page: PageModel) -> None:
         if not b.crop_path or not Path(b.crop_path).is_file():
             return
         w_rel = (b.bbox[2] - b.bbox[0]) / max(1, page.width)
-        width = max(1.5, min(self.content_w_cm, w_rel * self.page_w_cm))
-        para = self.doc.add_paragraph()
-        para.alignment = self._alignment(b, page)
+        avail = self.content_w_cm if self._cols == 1 else (self.content_w_cm - COL_SPACE_CM) / 2
+        if self._in_row:
+            avail = self._cell_w_cm
+        width = max(1.0, min(avail, w_rel * self.page_w_cm))
+        para = self._target.add_paragraph()
+        para.alignment = self._alignment(b, page) if not self._in_row else WD_ALIGN_PARAGRAPH.CENTER
         para.add_run().add_picture(b.crop_path, width=Cm(width))
 
     def _table(self, b: BlockModel, page: PageModel) -> None:
@@ -333,7 +494,7 @@ class DocxBuilder:
         nrows = len(grid)
         if not ncols:
             return
-        table = self.doc.add_table(rows=nrows, cols=ncols)
+        table = self._target.add_table(rows=nrows, cols=ncols)
         table.style = "Table Grid"
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
         rtl_cells = sum(1 for tr in rows for td in tr.xpath("./td|./th") if arabic_ratio(to_text(lxml_html.tostring(td, encoding="unicode"))) > 0.5)
@@ -361,7 +522,8 @@ class DocxBuilder:
                     if cell_dir == "rtl":
                         _bidi_paragraph(para)
                     self._add_runs(para, segs, cell_dir == "rtl", max(8, self.body_pt - 1), bold_all=cell.tag == "th")
-        self.doc.add_paragraph()
+        if not self._in_row:
+            self._target.add_paragraph()
 
     def _set_header_footer(self) -> None:
         sec = self.doc.sections[0]
@@ -384,37 +546,193 @@ class DocxBuilder:
             return self.doc
         self._setup_section()
         self.body_pt = self._body_size()
-        heights = sorted(b.bbox[3] - b.bbox[1] for p in self.pages for b in p.blocks if b.label == "SectionHeader")
-        rank: dict[int, int] = {}
-        for p in self.pages:
-            for b in p.blocks:
-                if b.label == "SectionHeader" and heights:
-                    pos = heights.index(b.bbox[3] - b.bbox[1]) / max(1, len(heights) - 1)
-                    rank[id(b)] = 1 if pos > 0.75 else (2 if pos > 0.35 else 3)
+        rank = self._heading_ranks()
         self._set_header_footer()
         repeated_keys = {k: re.sub(r"\d+", "#", to_text(v).lower()).strip() for k, v in self.repeated.items()}
-        for n, page in enumerate(self.pages):
-            if n:
-                self.doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
-            for b in page.blocks:
-                key = re.sub(r"\d+", "#", to_text(b.html).lower()).strip()
-                if b.label in ("PageHeader", "PageFooter") and repeated_keys.get(b.label) == key and key:
-                    continue  # déjà dans le vrai en-tête / pied de page
-                if b.label in VISUAL:
-                    self._picture(b, page)
-                elif b.label == "Table":
-                    self._table(b, page)
-                elif b.label == "SectionHeader":
-                    self._heading(b, page, rank)
-                elif b.label in ("ListGroup", "ListItem"):
-                    self._text(b, page, style="List Bullet")
-                elif b.label == "Caption":
-                    self._text(b, page, style="Caption", size=max(8, self.body_pt - 2))
-                elif b.label == "Footnote":
-                    self._text(b, page, size=max(8, self.body_pt - 3))
-                else:
-                    self._text(b, page)
+        rtl_doc = self._mostly_rtl()
+        first = True
+        for page in self.pages:
+            for cols, group in self._column_groups(page) or [(1, [])]:  # une page vide reste une page
+                starts_page = not group or not group[0][1]
+                if first:
+                    self._set_columns(self.doc.sections[0], cols, rtl_doc)
+                    first = False
+                elif cols != self._cols or starts_page:
+                    start = WD_SECTION.NEW_PAGE if starts_page else WD_SECTION.CONTINUOUS
+                    self._set_columns(self.doc.add_section(start), cols, rtl_doc)
+                self._cols = cols
+                if starts_page:
+                    self._prev_bottom = None
+                blocks = [b for b, _ in group]
+                for row in (self._rows(blocks) if cols == 1 else [[b] for b in blocks]):
+                    if len(row) == 1:
+                        self._block(row[0], page, rank, repeated_keys)
+                    else:
+                        self._row(row, page, rank)
+                    self._prev_bottom = max(b.bbox[3] for b in row)
         return self.doc
+
+    @staticmethod
+    def _rows(blocks: list[BlockModel]) -> list[list[BlockModel]]:
+        """Regroupe les blocs consécutifs posés côte à côte (même hauteur, sans recouvrement horizontal)."""
+        rows: list[list[BlockModel]] = []
+        for b in blocks:
+            row = rows[-1] if rows else None
+            if row and b.label != "Table" and all(o.label != "Table" for o in row):
+                h = min(b.bbox[3] - b.bbox[1], min(o.bbox[3] - o.bbox[1] for o in row))
+                v_overlap = min(b.bbox[3], max(o.bbox[3] for o in row)) - max(b.bbox[1], min(o.bbox[1] for o in row))
+                side_by_side = all(b.bbox[0] >= o.bbox[2] - 5 or b.bbox[2] <= o.bbox[0] + 5 for o in row)
+                if side_by_side and h > 0 and v_overlap >= 0.5 * h:
+                    row.append(b)
+                    continue
+            rows.append([b])
+        return rows
+
+    def _row(self, row: list[BlockModel], page: PageModel, rank: dict[int, int]) -> None:
+        """Blocs côte à côte : une rangée de tableau sans bordures, une cellule par bloc, de gauche à droite."""
+        row = sorted(row, key=lambda b: b.bbox[0])
+        env_l, env_r = self._env_left * page.width, self._env_right * page.width
+        bounds = [min(env_l, row[0].bbox[0])]
+        for a, c in zip(row, row[1:]):
+            bounds.append((a.bbox[2] + c.bbox[0]) / 2)
+        bounds.append(max(env_r, row[-1].bbox[2]))
+        span = bounds[-1] - bounds[0]
+        widths = [(bounds[i + 1] - bounds[i]) / span * self.content_w_cm for i in range(len(row))]
+        if self._prev_bottom is not None:  # espace vertical avant la rangée
+            gap_pt = max(0.0, (min(b.bbox[1] for b in row) - self._prev_bottom) * 72 / (page.dpi or 200))
+            if gap_pt > 6:
+                spacer = self._target.add_paragraph()
+                spacer.paragraph_format.space_after = Pt(0)
+                spacer.paragraph_format.line_spacing = Pt(min(72, round(gap_pt * 0.75)))
+        table = self._target.add_table(rows=1, cols=len(row))
+        table.autofit = False  # largeurs fixes (python-docx place w:tblLayout au bon endroit du schéma)
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        for col, w in zip(table._tbl.tblGrid.findall(qn("w:gridCol")), widths):
+            col.set(qn("w:w"), str(int(w * 567)))  # la grille fait foi pour Word, pas seulement les cellules
+        for i, (b, w) in enumerate(zip(row, widths)):
+            cell = table.cell(0, i)
+            cell.width = Cm(w)
+            self._target, self._in_row, self._cell_w_cm = cell, True, w
+            try:
+                self._render(b, page, rank)
+                for p in cell.paragraphs:  # cellule du milieu (logo, titre) : centrée
+                    if p.alignment is None and 0 < i < len(row) - 1:
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                first = cell.paragraphs[0]
+                if not first.text and not first._p.xpath(".//w:drawing") and len(cell.paragraphs) > 1:
+                    first._p.getparent().remove(first._p)  # paragraphe vide créé avec la cellule
+            finally:
+                self._target, self._in_row = self.doc, False
+
+    def _heading_ranks(self) -> dict[int, int]:
+        """Niveau 1 à 3 des titres d'après leur taille mesurée (à défaut, la hauteur d'une ligne de la boîte)."""
+        sizes: dict[int, float] = {}
+        for p in self.pages:
+            for b in p.blocks:
+                if b.label == "SectionHeader":
+                    pt = self._estimate_pt(b, p) or (b.bbox[3] - b.bbox[1]) * 72 / (p.dpi or 200)
+                    sizes[id(b)] = round(pt, 1)
+        distinct = sorted(set(sizes.values()), reverse=True)
+        rank = {}
+        for k, pt in sizes.items():
+            pos = distinct.index(pt) / max(1, len(distinct) - 1) if len(distinct) > 1 else 0.5
+            rank[k] = 1 if pos < 0.25 else (2 if pos < 0.65 else 3)
+        return rank
+
+    def _mostly_rtl(self) -> bool:
+        n = sum(len(to_text(b.html)) for p in self.pages for b in p.blocks if b.direction == "rtl")
+        total = sum(len(to_text(b.html)) for p in self.pages for b in p.blocks) or 1
+        return n / total > 0.5
+
+    def _set_columns(self, section, cols: int, rtl: bool) -> None:
+        sectpr = section._sectPr
+        for old in sectpr.findall(qn("w:cols")):
+            sectpr.remove(old)
+        el = OxmlElement("w:cols")
+        el.set(qn("w:num"), str(cols))
+        el.set(qn("w:space"), str(int(COL_SPACE_CM * 567)))
+        _insert_before(sectpr, el, _AFTER_COLS)  # l'ordre des enfants de sectPr est imposé par le schéma
+        bidi = sectpr.find(qn("w:bidi"))
+        if rtl and cols > 1 and bidi is None:  # colonnes de droite à gauche pour un document arabe
+            _insert_before(sectpr, OxmlElement("w:bidi"), _AFTER_BIDI)
+        elif bidi is not None and not (rtl and cols > 1):
+            sectpr.remove(bidi)
+
+    def _column_groups(self, page: PageModel) -> list[tuple[int, list[tuple[BlockModel, bool]]]]:
+        """Découpe la page en suites de blocs à 1 ou 2 colonnes, dans l'ordre de lecture.
+
+        Chaque bloc est accompagné d'un drapeau « pas le premier de la page » (False = la page commence).
+        Une suite de blocs étroits (moins de 55 % de la largeur utile) répartis des deux côtés du milieu
+        devient une section à deux colonnes ; les blocs pleine largeur (titres, tableaux larges) coupent la suite.
+        """
+        blocks = list(page.blocks)
+        if not blocks:
+            return []
+        main = [b for b in blocks if b.label not in ("PageHeader", "PageFooter")] or blocks
+        left = min(b.bbox[0] for b in main)
+        right = max(b.bbox[2] for b in main)
+        span = max(1.0, right - left)
+        mid = left + span / 2
+        if page.width:
+            self._col_mid = mid / page.width
+
+        slack = 0.04 * span
+
+        def side(b: BlockModel) -> str | None:
+            """Colonne du bloc, ou None s'il chevauche le milieu (bloc centré : titre court, signature…)."""
+            if b.bbox[2] <= mid + slack:
+                return "g"
+            if b.bbox[0] >= mid - slack:
+                return "d"
+            return None
+
+        def narrow(b: BlockModel) -> bool:
+            return ((b.bbox[2] - b.bbox[0]) < 0.55 * span and side(b) is not None
+                    and b.label not in ("PageHeader", "PageFooter"))
+
+        runs: list[tuple[bool, list[BlockModel]]] = []
+        for b in blocks:
+            n = narrow(b) and self.opt.columns
+            if runs and runs[-1][0] == n:
+                runs[-1][1].append(b)
+            else:
+                runs.append((n, [b]))
+        groups: list[tuple[int, list[BlockModel]]] = []
+        for n, bs in runs:
+            two = n and len({side(b) for b in bs}) == 2 and sum(len(to_text(b.html)) for b in bs) > 200
+            cols = 2 if two else 1
+            if groups and groups[-1][0] == cols:
+                groups[-1][1].extend(bs)
+            else:
+                groups.append((cols, bs))
+        out = []
+        first = True
+        for cols, bs in groups:
+            out.append((cols, [(b, not first or k > 0) for k, b in enumerate(bs)]))
+            first = False
+        return out
+
+    def _block(self, b: BlockModel, page: PageModel, rank: dict[int, int], repeated_keys: dict[str, str]) -> None:
+        key = re.sub(r"\d+", "#", to_text(b.html).lower()).strip()
+        if b.label in ("PageHeader", "PageFooter") and repeated_keys.get(b.label) == key and key:
+            return  # déjà dans le vrai en-tête / pied de page
+        self._render(b, page, rank)
+
+    def _render(self, b: BlockModel, page: PageModel, rank: dict[int, int]) -> None:
+        if b.label in VISUAL:
+            self._picture(b, page)
+        elif b.label == "Table":
+            self._table(b, page)
+        elif b.label == "SectionHeader":
+            self._heading(b, page, rank)
+        elif b.label in ("ListGroup", "ListItem"):
+            self._text(b, page, style="List Bullet")
+        elif b.label == "Caption":
+            self._text(b, page, style="Caption", size=max(8, self.body_pt - 2))
+        elif b.label == "Footnote":
+            self._text(b, page, size=max(8, self.body_pt - 3))
+        else:
+            self._text(b, page)
 
     def save(self, path: str | Path) -> None:
         self.build().save(str(path))

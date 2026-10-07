@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api import admin
 from app.api.deps import current_user
+from app.api.documents import DOCX_FONTS
 from app.core.db import get_db
 from app.models import User
 from app.services import app_settings
@@ -29,4 +30,6 @@ def options(user: User = Depends(current_user), db: Session = Depends(get_db)) -
         "default_model": app_settings.get_setting(db, "ollama_model"),
         "max_upload_mb": app_settings.get_setting(db, "max_upload_mb"),
         "max_pages": app_settings.get_setting(db, "max_pages"),
+        "fonts": sorted(DOCX_FONTS),
+        "default_font": app_settings.get_setting(db, "docx_latin_font"),
     }

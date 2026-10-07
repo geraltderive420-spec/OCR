@@ -26,6 +26,9 @@ DEFAULTS: dict[str, tuple[Any, type, float | None, float | None]] = {
     "gpu_idle_unload_minutes": (3, int, 0, 120),  # arrêt de llama-server après inactivité
     "gpu_min_free_mb": (2600, int, 256, 24576),  # VRAM libre requise pour démarrer l'OCR
     "session_idle_minutes": (30, int, 1, 1440),
+    "docx_latin_font": ("Arial", str, None, None),  # police latine par défaut du DOCX (modifiable par document)
+    "docx_arabic_font": ("Simplified Arabic", str, None, None),  # police du texte arabe dans le DOCX
+    "docx_columns": (True, bool, None, None),  # reproduire les pages en deux colonnes
 }
 CHOICES = {"default_preprocess": {"auto", "leger", "delave", "tres_delave"}}
 
@@ -59,6 +62,8 @@ def _coerce(key: str, value: Any) -> Any:
         raise SettingError(f"{key} doit être entre {lo} et {hi}")
     if key in CHOICES and value not in CHOICES[key]:
         raise SettingError(f"{key} doit être l'une des valeurs : {', '.join(sorted(CHOICES[key]))}")
+    if key in ("docx_latin_font", "docx_arabic_font") and not value:
+        raise SettingError("Le nom de police ne peut pas être vide.")
     if key == "ollama_model":
         if not value:
             raise SettingError("Le modèle de correction ne peut pas être vide (désactivez la correction par document).")

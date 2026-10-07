@@ -2,6 +2,7 @@
   --bg: #f5f6f8; --surface: #ffffff; --text: #1d2330; --muted: #667085; --line: #e1e5ec;
   --primary: #2457c5; --primary-text: #ffffff; --danger: #b42318; --warn: #b54708; --warn-bg: #fff4e5; --ok: #067647;
   --add: #d1fadf; --del: #fee4e2; --box: #2457c5; --check: #f79009;
+  --box-visual: #a3249c; --box-table: #b42318; --box-title: #067647;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -9,6 +10,7 @@
     --bg: #12151c; --surface: #1b1f29; --text: #e6e9f0; --muted: #98a2b3; --line: #2c3342;
     --primary: #6b93f0; --primary-text: #0b1020; --danger: #f97066; --warn: #fdb022; --warn-bg: #3a2a10; --ok: #47cd89;
     --add: #0b3b25; --del: #4a1d1a; --box: #6b93f0; --check: #fdb022;
+    --box-visual: #e478dd; --box-table: #f97066; --box-title: #47cd89;
   }
 }
 * { box-sizing: border-box; }
@@ -77,6 +79,9 @@ td.actions, .actions { display: flex; gap: .5rem; align-items: center; flex-wrap
 .scan-inner img { width: 100%; height: auto; }
 .scan-inner svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .box { fill: transparent; stroke: var(--box); stroke-width: 2; stroke-opacity: .35; cursor: pointer; vector-effect: non-scaling-stroke; }
+.box.visual { stroke: var(--box-visual); }
+.box.table { stroke: var(--box-table); }
+.box.title { stroke: var(--box-title); }
 .box.check { stroke: var(--check); stroke-opacity: .8; }
 .box.hover, .box.sel { fill: var(--box); fill-opacity: .15; stroke-opacity: 1; stroke-width: 3; }
 .blocks { display: grid; gap: .6rem; }
