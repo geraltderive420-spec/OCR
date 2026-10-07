@@ -29,6 +29,8 @@ def app_env(tmp_path, monkeypatch):
     monkeypatch.setenv("OCR_OCR_BACKEND", "dummy")
     from app.core import config, db
 
+    # Les tests ignorent backend/.env (réglages de développement : moteur OCR réel, chemins...).
+    monkeypatch.setitem(config.Settings.model_config, "env_file", None)
     config.reset_settings_cache()
     engine = db.init_engine()
     import app.models  # noqa: F401

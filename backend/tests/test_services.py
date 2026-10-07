@@ -216,3 +216,18 @@ def test_autodiagnostic(app_env, monkeypatch, capsys):
     monkeypatch.setenv("OCR_SECRET_KEY", "une-autre-cle-aleatoire-de-plus-de-32-caracteres")
     config.reset_settings_cache()
     assert not any("OCR_SECRET_KEY" in r.message and r.level == KO for r in run_checks())
+
+
+def test_compte_de_developpement(app_env, client, monkeypatch):
+    from app import cli
+    from app.dev_seed import DEV_PASSWORD, DEV_USERNAME
+
+    assert cli.main(["seed-dev"]) == 0
+    r = client.post("/api/auth/login", json={"username": DEV_USERNAME, "password": DEV_PASSWORD})
+    assert r.status_code == 200 and r.json()["user"]["role"] == "admin" and not r.json()["user"]["must_change_password"]
+    assert cli.main(["seed-dev"]) == 0  # idempotent
+    from app.core import config
+
+    monkeypatch.setenv("OCR_COOKIE_SECURE", "true")  # production : refusé
+    config.reset_settings_cache()
+    assert cli.main(["seed-dev"]) == 3

@@ -29,6 +29,10 @@ class OcrEngine(Protocol):
     def stop(self) -> None: ...
 
 
+class OcrConfigError(RuntimeError):
+    """Le moteur OCR est mal configuré (binaire ou modèles introuvables) : le document échoue avec un message clair."""
+
+
 class OcrUnavailable(RuntimeError):
     """Le moteur ne peut pas démarrer maintenant (ex. VRAM insuffisante) : le job doit attendre."""
 

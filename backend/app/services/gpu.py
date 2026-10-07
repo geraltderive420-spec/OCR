@@ -34,7 +34,11 @@ def free_vram_mb() -> int | None:
 
 
 class LlamaServerError(RuntimeError):
-    pass
+    """Erreur du serveur OCR. `permanent` = mauvaise configuration (inutile de réessayer), sinon situation passagère."""
+
+    def __init__(self, message: str, permanent: bool = False):
+        super().__init__(message)
+        self.permanent = permanent
 
 
 def _gguf_paths() -> tuple[str, str]:
@@ -46,16 +50,16 @@ def _gguf_paths() -> tuple[str, str]:
         return (hf_hub_download(repo, "surya-2.gguf", local_files_only=True),
                 hf_hub_download(repo, "surya-2-mmproj.gguf", local_files_only=True))
     except Exception as e:  # noqa: BLE001
-        raise LlamaServerError("Fichiers GGUF de Surya 2 absents du cache local.") from e
+        raise LlamaServerError("Fichiers GGUF de Surya 2 absents du cache local.", permanent=True) from e
 
 
 def find_binary() -> Path:
     d = get_settings().llama_cpp_dir
     if d is None:
-        raise LlamaServerError("OCR_LLAMA_CPP_DIR n'est pas défini (dossier Release de llama.cpp).")
+        raise LlamaServerError("OCR_LLAMA_CPP_DIR n'est pas défini (dossier Release de llama.cpp).", permanent=True)
     exe = Path(d) / ("llama-server.exe" if os.name == "nt" else "llama-server")
     if not exe.is_file():
-        raise LlamaServerError("llama-server introuvable dans OCR_LLAMA_CPP_DIR.")
+        raise LlamaServerError("llama-server introuvable dans OCR_LLAMA_CPP_DIR.", permanent=True)
     return exe
 
 

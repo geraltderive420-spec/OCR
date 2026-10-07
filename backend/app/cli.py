@@ -2,6 +2,7 @@
 
     python -m app.cli create-admin <identifiant>      (mot de passe demandé, ou variable OCR_ADMIN_PASSWORD)
     python -m app.cli purge
+    python -m app.cli seed-dev                         (compte de DÉVELOPPEMENT « demo », refusé en production)
     python -m app.cli check                            (auto-diagnostic : configuration, base, moteur OCR, Ollama)
 """
 from __future__ import annotations
@@ -35,6 +36,27 @@ def create_admin(username: str, password: str | None = None) -> int:
     return 0
 
 
+def seed_dev() -> int:
+    """Crée (ou remet à jour) le compte de développement. Refusé en production."""
+    from app.core.config import get_settings
+    from app.dev_seed import DEV_PASSWORD, DEV_ROLE, DEV_USERNAME
+
+    if get_settings().cookie_secure:
+        print("Refusé : OCR_COOKIE_SECURE=true indique un environnement de production.", file=sys.stderr)
+        return 3
+    with session_scope() as db:
+        u = db.scalar(select(User).where(User.username == DEV_USERNAME))
+        if u is None:
+            u = User(username=DEV_USERNAME, role=DEV_ROLE)
+            db.add(u)
+        u.password_hash = hash_password(DEV_PASSWORD)
+        u.role, u.is_active, u.must_change_password = DEV_ROLE, True, False
+        u.failed_attempts, u.locked_until = 0, None
+        u.token_version = (u.token_version or 0) + 1
+    print(f"Compte de développement « {DEV_USERNAME} » prêt (identifiants dans backend/app/dev_seed.py).")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m app.cli")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -42,10 +64,13 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("username")
     sub.add_parser("purge")
     sub.add_parser("check")
+    sub.add_parser("seed-dev")
     args = ap.parse_args(argv)
     init_engine()
     if args.cmd == "create-admin":
         return create_admin(args.username)
+    if args.cmd == "seed-dev":
+        return seed_dev()
     if args.cmd == "check":
         from app.selfcheck import main as check_main
 

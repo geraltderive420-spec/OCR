@@ -19,7 +19,7 @@ from app.core.db import SessionLocal, init_engine
 from app.models import DocStatus, Document, Job, JobStatus, utcnow
 from app.services import app_settings, pipeline, storage
 from app.services.gpu import LlamaServerError, free_vram_mb
-from app.services.ocr import OcrEngine, OcrUnavailable
+from app.services.ocr import OcrConfigError, OcrEngine, OcrUnavailable
 
 log = logging.getLogger("ocr.worker")
 GPU_RETRY_SECONDS = 20
@@ -53,6 +53,8 @@ class Worker:
             try:
                 eng.start()
             except LlamaServerError as e:
+                if e.permanent:
+                    raise OcrConfigError(str(e)) from e
                 raise OcrUnavailable(str(e)) from e
             self.engine = eng
         self.engine_last_used = time.monotonic()
@@ -127,7 +129,9 @@ class Worker:
                 return
             job.status, job.error = JobStatus.failed.value, type(e).__name__
             if doc is not None:  # le document a pu être supprimé pendant le traitement
-                doc.status, doc.error = DocStatus.failed.value, f"Échec du traitement ({type(e).__name__})"
+                doc.status = DocStatus.failed.value
+                doc.error = ("Moteur OCR mal configuré : contactez l'administrateur (voir python -m app.cli check)."
+                             if isinstance(e, OcrConfigError) else f"Échec du traitement ({type(e).__name__})")
             db.commit()
             log.error("document %s : échec (%s)", job.document_id, type(e).__name__)
 

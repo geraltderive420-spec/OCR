@@ -112,3 +112,22 @@ def test_vram_insuffisante_met_le_document_en_attente(client, make_user, login, 
     assert runner.Worker().run_once()
     d = client.get(f"/api/documents/{doc['id']}", headers=h).json()
     assert d["status"] == "waiting_gpu" and d["error"] is None
+
+
+def test_moteur_mal_configure_echoue_clairement(client, make_user, login, monkeypatch):
+    """Sans OCR_LLAMA_CPP_DIR, le document échoue avec un message clair (au lieu d'attendre le GPU indéfiniment)."""
+    from app.core import config
+    from app.worker import runner
+    from tests.conftest import make_pdf
+    from tests.test_documents import upload
+
+    make_user()
+    h = login()
+    monkeypatch.setenv("OCR_OCR_BACKEND", "surya2")
+    monkeypatch.delenv("OCR_LLAMA_CPP_DIR", raising=False)
+    config.reset_settings_cache()
+    monkeypatch.setattr(runner, "free_vram_mb", lambda: 8000)
+    doc = upload(client, h, make_pdf(1)).json()
+    assert runner.Worker().run_once()
+    d = client.get(f"/api/documents/{doc['id']}", headers=h).json()
+    assert d["status"] == "failed" and "mal configuré" in d["error"]
