@@ -5,16 +5,53 @@ export interface DocSummary {
   progress: number;
   page_count: number;
   size_bytes: number;
-  options: Record<string, unknown> & { llm_stats?: { proposees: number; appliquees: number; rejetees: number; ignoree: boolean } };
+  options: Record<string, unknown> & {
+    llm_stats?: { proposees: number; appliquees: number; rejetees: number; ignoree: boolean };
+    second_stats?: { relus: number; remplaces: number; desaccords: number; ignoree: boolean };
+    review?: boolean;
+  };
   error: string | null;
   created_at: string;
   finished_at: string | null;
+  started_at: string | null;
+  updated_at: string | null;
+  batch_id: number | null;
+  batch_name: string | null;
+  cancel_requested: boolean;
   has_export: boolean;
 }
 
 export interface DocDetail extends DocSummary {
   pages: { index: number; status: string; mean_confidence: number | null }[];
   pending_corrections: number;
+  to_check: number;
+  queue_position: number | null;
+}
+
+export interface DocPage {
+  items: DocSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+  counts: Record<string, number>;
+}
+
+export interface BatchSummary {
+  id: number;
+  name: string;
+  options: Record<string, unknown>;
+  created_at: string;
+  total: number;
+  counts: Record<"queued" | "running" | "review" | "done" | "failed" | "cancelled", number>;
+  pages: number;
+  progress: number;
+  active: number;
+  eta_seconds: number | null;
+  exportable: number;
+}
+
+export interface BatchDetail extends BatchSummary {
+  documents: DocSummary[];
 }
 
 export interface Correction {
@@ -60,6 +97,16 @@ export interface Options {
   max_pages: number;
   fonts: string[];
   default_font: string;
+  default_preprocess: string;
+  accepted: string[];
+}
+
+export interface ServiceStatus {
+  worker_alive: boolean;
+  worker_state: string;
+  engine: string;
+  queue: number;
+  my_active: number;
 }
 
 export const ACTIVE_STATUSES = ["queued", "waiting_gpu", "preprocessing", "ocr", "correcting", "exporting"];

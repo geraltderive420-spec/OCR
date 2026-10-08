@@ -43,7 +43,12 @@ def run_checks() -> list[Result]:
         add(KO, "OCR_SECRET_KEY est la valeur par défaut : générez une clé aléatoire.")
     else:
         add(OK, "Clé de signature personnalisée")
-    add(OK if s.cookie_secure else WARN, "Cookies Secure activés (HTTPS)" if s.cookie_secure else "OCR_COOKIE_SECURE=false : à activer derrière HTTPS")
+    local_only = s.api_host in ("127.0.0.1", "localhost", "::1")
+    if s.cookie_secure:
+        add(OK, "Cookies Secure activés (HTTPS)")
+    else:
+        add(OK if local_only else WARN, "Accès local seulement (127.0.0.1), HTTP suffisant" if local_only else
+            "OCR_COOKIE_SECURE=false alors que l'application est ouverte au réseau : activez HTTPS")
     if os.environ.get("HF_HUB_OFFLINE") == "1":
         add(OK, "Mode hors ligne (HF_HUB_OFFLINE=1)")
     else:
@@ -54,6 +59,13 @@ def run_checks() -> list[Result]:
         with get_engine().connect() as c:
             c.execute(text("SELECT 1"))
             add(OK, "Base de données joignable")
+            if c.dialect.name == "sqlite":
+                mode = c.exec_driver_sql("PRAGMA journal_mode").scalar()
+                quick = c.exec_driver_sql("PRAGMA quick_check").scalar()
+                add(OK if quick == "ok" else KO, "Base SQLite intègre" if quick == "ok" else
+                    "Base SQLite abîmée (quick_check) : restaurez la dernière sauvegarde")
+                if str(mode).lower() != "wal":
+                    add(WARN, f"Journal SQLite en mode {mode} (WAL attendu)")
             try:
                 current = c.execute(text("SELECT version_num FROM alembic_version")).scalar()
             except Exception:  # noqa: BLE001
@@ -80,26 +92,57 @@ def run_checks() -> list[Result]:
         add(KO, f"Dossier de données inaccessible ({type(e).__name__})")
 
     # Moteur OCR
-    if s.ocr_backend == "surya2":
+    from app.services.ocr_config import OcrConfig
+
+    cfg = OcrConfig.load()
+    if cfg.backend == "surya2":
         try:
-            from app.services.gpu import _gguf_paths, find_binary, free_vram_mb
+            from app.services import diagnostics
+            from app.services.gpu import gpu_info
 
-            add(OK, "llama-server présent") if find_binary() else None
-            _gguf_paths()
-            add(OK, "Modèles GGUF de Surya 2 présents dans le cache local")
-            if s.layout_refine:
-                from platformdirs import user_cache_dir
-
-                det = Path(user_cache_dir("datalab")) / "models" / "text_detection"
-                found = det.is_dir() and any(p.is_file() for p in det.rglob("*"))
+            rep = diagnostics.binary_report(cfg.llama_cpp_dir)
+            if rep["ok"]:
+                add(OK, f"llama-server démarre ({rep['version']})")
+            elif cfg.cpu_fallback and diagnostics.binary_report(cfg.llama_cpp_cpu_dir)["ok"]:
+                add(WARN, f"llama-server GPU inutilisable ({rep['version']}) : repli sur le build processeur (lent)")
+            else:
+                add(KO, f"llama-server inutilisable : {rep['version']} (Administration > Moteur OCR)")
+            add(OK if diagnostics.surya_gguf_present(cfg) else KO,
+                "Modèles GGUF de Surya 2 présents dans le cache local" if diagnostics.surya_gguf_present(cfg) else
+                "Fichiers GGUF de Surya 2 absents du cache local (HF_HOME)")
+            if cfg.layout_refine:
+                found = diagnostics.line_detector_present()
                 add(OK if found else WARN, "Détecteur de lignes présent (recalage de la mise en page)" if found else
-                    "Détecteur de lignes absent du cache datalab : la mise en page ne sera pas recalée (voir build-bundle.ps1)")
-            vram = free_vram_mb()
-            add(OK if vram is not None else WARN, f"VRAM libre : {vram} Mo" if vram is not None else "GPU non détecté (nvidia-smi)")
+                    "Détecteur de lignes absent (MODEL_CACHE_DIR) : la mise en page ne sera pas recalée")
+            if cfg.layout_heron:
+                found = diagnostics.heron_present()
+                add(OK if found else WARN, "Détecteur Heron présent (second avis sur la mise en page)" if found else
+                    "Détecteur Heron absent du cache : pas de second avis sur la mise en page")
+            if cfg.second_reader:
+                found = diagnostics.second_reader_present()
+                add(OK if found else WARN, "Second lecteur PaddleOCR-VL présent (relecture des blocs douteux)" if found
+                    else "Second lecteur PaddleOCR-VL absent du cache : pas de seconde lecture")
+            cards = gpu_info()
+            if cards:
+                c0 = cards[0]
+                add(OK, f"GPU : {c0['name']}, {c0['free_mb']} / {c0['total_mb']} Mo libres, pilote {c0['driver']}")
+            else:
+                add(WARN, "GPU non détecté (nvidia-smi) : " + ("OCR sur le processeur, lent" if cfg.cpu_fallback else
+                                                               "l'OCR ne pourra pas démarrer"))
         except Exception as e:  # noqa: BLE001
-            add(KO, str(e) if e.__class__.__name__ == "LlamaServerError" else f"Moteur OCR indisponible ({type(e).__name__})")
+            add(KO, f"Moteur OCR indisponible ({type(e).__name__})")
     else:
-        add(WARN, f"Moteur OCR « {s.ocr_backend} » (démonstration, pas de reconnaissance réelle)")
+        add(WARN, f"Moteur OCR « {cfg.backend} » (démonstration, pas de reconnaissance réelle)")
+
+    # Worker
+    from app.worker.runner import read_status
+
+    w = read_status()
+    if w is None:
+        add(WARN, "Le worker n'a encore jamais tourné (python -m app.serve le démarre)")
+    else:
+        add(OK if w.get("alive") else WARN, "Worker actif" if w.get("alive") else
+            "Worker arrêté : les documents resteront en attente (python -m app.serve)")
 
     # Ollama (facultatif)
     try:

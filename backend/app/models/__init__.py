@@ -35,6 +35,15 @@ class DocStatus(str, enum.Enum):
     exporting = "exporting"
     done = "done"
     failed = "failed"
+    cancelled = "cancelled"
+
+
+# Statuts d'un document que le worker n'a pas fini de traiter.
+ACTIVE_STATUSES = frozenset({DocStatus.queued.value, DocStatus.waiting_gpu.value, DocStatus.preprocessing.value,
+                             DocStatus.ocr.value, DocStatus.correcting.value, DocStatus.exporting.value})
+# Statuts où le worker est en train de travailler sur le document (suppression impossible).
+BUSY_STATUSES = frozenset({DocStatus.preprocessing.value, DocStatus.ocr.value, DocStatus.correcting.value,
+                           DocStatus.exporting.value})
 
 
 class JobStatus(str, enum.Enum):
@@ -71,12 +80,27 @@ class User(Base):
     documents: Mapped[list["Document"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
+class Batch(Base):
+    """Lot : plusieurs fichiers déposés ensemble, suivis et téléchargés ensemble."""
+    __tablename__ = "batches"
+    __table_args__ = (Index("ix_batches_user_created", "user_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    options: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    documents: Mapped[list["Document"]] = relationship(back_populates="batch", order_by="Document.id")
+
+
 class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (Index("ix_documents_user_created", "user_id", "created_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    batch_id: Mapped[int | None] = mapped_column(ForeignKey("batches.id", ondelete="SET NULL"), nullable=True, index=True)
     original_filename: Mapped[str] = mapped_column(String(255))
     stored_name: Mapped[str] = mapped_column(String(64))  # nom aléatoire sur disque
     size_bytes: Mapped[int] = mapped_column(Integer, default=0)
@@ -88,8 +112,11 @@ class Document(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # début du traitement (estimations)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)  # lu par le worker entre deux pages
 
     user: Mapped[User] = relationship(back_populates="documents")
+    batch: Mapped[Batch | None] = relationship(back_populates="documents")
     pages: Mapped[list["Page"]] = relationship(back_populates="document", cascade="all, delete-orphan", order_by="Page.index")
     jobs: Mapped[list["Job"]] = relationship(back_populates="document", cascade="all, delete-orphan")
     exports: Mapped[list["Export"]] = relationship(back_populates="document", cascade="all, delete-orphan")

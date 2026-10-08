@@ -16,7 +16,7 @@ from app.core.security import check_password_strength, hash_password
 from app.models import AuditLog, DocStatus, Document, Role, User, utcnow
 from app.services import app_settings
 from app.services.audit import audit
-from app.services.gpu import free_vram_mb
+from app.services.gpu import free_vram_mb, gpu_info
 from app.services.storage import user_usage_bytes
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -168,8 +168,70 @@ def services(admin: User = Depends(admin_user), db: Session = Depends(get_db)) -
         llama = httpx.get(f"http://127.0.0.1:{s.llama_port}/health", timeout=2).status_code == 200
     except httpx.HTTPError:
         llama = False
+    from app.services import diagnostics
+    from app.worker.runner import read_status
+
     return {"base_de_donnees": True, "ollama": tags is not None, "llama_server": llama,
             "vram_libre_mo": free_vram_mb(), "disque_libre_mo": du.free // (1024 * 1024),
             "disque_total_mo": du.total // (1024 * 1024), "ocr_backend": s.ocr_backend,
             "file_attente": db.scalar(select(func.count()).select_from(Document).where(
-                Document.status.in_([DocStatus.queued.value, DocStatus.waiting_gpu.value]))) or 0}
+                Document.status.in_([DocStatus.queued.value, DocStatus.waiting_gpu.value]))) or 0,
+            "gpu": gpu_info(), "worker": read_status(), "database": diagnostics.database_report(),
+            "hors_ligne": diagnostics.offline_report()}
+
+
+class ResetIn(BaseModel):
+    keys: list[str] = Field(max_length=50)
+
+
+@router.post("/settings/reset")
+def reset_settings(body: ResetIn, admin: User = Depends(admin_user), db: Session = Depends(get_db)) -> dict:
+    """Rend aux réglages leur valeur par défaut (celle de backend/.env pour le moteur OCR)."""
+    try:
+        for k in body.keys:
+            app_settings.reset_setting(db, k)
+            audit(db, admin.id, "setting_reset", k)
+    except app_settings.SettingError as e:
+        db.rollback()
+        raise HTTPException(422, str(e)) from e
+    db.commit()
+    return app_settings.get_all(db)
+
+
+OCR_KEYS = ("llama_cpp_dir", "llama_cpp_cpu_dir", "llama_parallel", "llama_ngl", "llama_ctx_size", "cpu_fallback",
+            "page_width", "block_token_ceiling", "layout_refine", "line_detector_device", "stamp_erase",
+            "layout_heron", "second_reader", "second_reader_threshold", "gpu_min_free_mb", "gpu_idle_unload_minutes")
+
+
+@router.get("/ocr")
+def ocr_engine(admin: User = Depends(admin_user), db: Session = Depends(get_db)) -> dict:
+    """Réglages du moteur OCR, valeurs par défaut, et état réel de l'installation (binaires, modèles, GPU, worker)."""
+    from app.services import diagnostics
+    from app.services.ocr_config import OcrConfig, describe
+    from app.worker.runner import read_status
+
+    cfg = OcrConfig.load(db)
+    values = app_settings.get_all(db)
+    return {
+        "settings": {k: values[k] for k in OCR_KEYS},
+        "defaults": {k: app_settings.default_value(k) for k in OCR_KEYS},
+        "effective": describe(cfg),
+        "backend": cfg.backend,
+        "binary": diagnostics.binary_report(cfg.llama_cpp_dir),
+        "cpu_binary": diagnostics.binary_report(cfg.llama_cpp_cpu_dir),
+        "models": diagnostics.models_report(cfg),
+        "gpu": gpu_info(),
+        "worker": read_status(),
+    }
+
+
+class LlamaDirIn(BaseModel):
+    path: str = Field(max_length=400)
+
+
+@router.post("/ocr/check-llama")
+def check_llama(body: LlamaDirIn, admin: User = Depends(admin_user)) -> dict:
+    """Vérifie un dossier llama.cpp AVANT de l'enregistrer : binaire trouvé et capable de démarrer."""
+    from app.services import diagnostics
+
+    return diagnostics.binary_report(app_settings.clean_path(body.path) or None)

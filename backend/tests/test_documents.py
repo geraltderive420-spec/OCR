@@ -197,7 +197,7 @@ def test_attente_gpu(client, make_user, login, monkeypatch):
     from app.services.ocr import OcrUnavailable
     from app.worker import runner
 
-    def no_gpu(self, db):
+    def no_gpu(self, db, cfg=None):
         raise OcrUnavailable("vram")
 
     monkeypatch.setattr(runner.Worker, "acquire_engine", no_gpu)
@@ -230,7 +230,7 @@ def test_document_supprime_pendant_le_traitement(client, make_user, login, monke
     doc = upload(client, h, make_pdf(1)).json()
     from app.services import pipeline
 
-    def vanish(db, d):
+    def vanish(db, d, cfg=None):
         db.delete(d)
         db.commit()
         raise RuntimeError("document disparu")

@@ -134,3 +134,45 @@ export async function downloadFile(path: string, filename: string) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
+
+/** Envoi d'un fichier avec suivi de progression (fetch ne le permet pas). Session renouvelée une fois si expirée. */
+export function uploadWithProgress<T>(path: string, form: FormData, onProgress: (sent: number, total: number) => void,
+  signal?: AbortSignal): Promise<T> {
+  const attempt = (retry: boolean): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `/api${path}`);
+      xhr.withCredentials = true;
+      if (accessToken) xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+      xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded, e.total);
+      xhr.onerror = () => reject(new ApiError(0, "Connexion au serveur impossible."));
+      xhr.onabort = () => reject(new ApiError(-1, "Envoi annulé."));
+      xhr.onload = () => {
+        if (xhr.status === 401 && retry) {
+          tryRefresh().then((ok) => {
+            if (ok) attempt(false).then(resolve, reject);
+            else {
+              accessToken = null;
+              onSessionLost?.();
+              reject(new ApiError(401, "Session expirée."));
+            }
+          });
+          return;
+        }
+        let data: unknown = null;
+        try {
+          data = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+        } catch {
+          /* corps non JSON */
+        }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data as T);
+        else {
+          const detail = (data as { detail?: unknown } | null)?.detail;
+          reject(new ApiError(xhr.status, typeof detail === "string" ? detail : xhr.status === 413 ? "Fichier trop volumineux." : "Une erreur est survenue."));
+        }
+      };
+      signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+      xhr.send(form);
+    });
+  return attempt(true);
+}

@@ -72,3 +72,14 @@ def test_ligne_a_morceaux_separes_coupee_en_blocs():
     first = [b for b in out if b.source == 0]
     assert len(first) == 3 and first[0].bbox[2] < 520 and first[2].bbox[0] > 1360
     assert len([b for b in out if b.source == 1]) == 1  # un paragraphe de plusieurs lignes n'est pas coupé
+
+
+def test_fusion_ajoute_les_zones_sautees_par_surya():
+    from app.services.ocr.layout_refine import fuse_detections
+    surya = [("Text", (100, 100, 900, 300)), ("Text", (100, 700, 900, 900))]
+    heron = [("Text", (105, 110, 895, 290), 0.95),      # déjà vu par Surya : rien ne change
+             ("SectionHeader", (300, 400, 700, 460), 0.9),  # sauté par Surya : ajouté entre les deux
+             ("Picture", (100, 1000, 300, 1200), 0.4)]  # trop incertain : ignoré
+    out, added = fuse_detections(surya, heron)
+    assert added == 1
+    assert [(lab, src) for lab, _, src in out] == [("Text", 0), ("SectionHeader", None), ("Text", 1)]

@@ -1,0 +1,129 @@
+==========================================================================
+  NUMÉRISATION OCR - COLIS DE DÉPLOIEMENT POUR LA STATION 100 % HORS LIGNE
+==========================================================================
+
+PROCÉDURE
+---------
+  1. Copier ce dossier ENTIER sur le disque local de la station (par exemple
+     C:\OCR). Ne pas installer depuis la clé USB : beaucoup plus lent, et une
+     copie interrompue passe inaperçue.
+  2. Double-cliquer sur  verifier_colis.bat
+     -> confirme que la copie est complète (empreintes SHA-256).
+  3. Double-cliquer sur  import_station.bat
+     -> installe Python, les dépendances, configure le poste, crée la base
+        (SQLite) et le compte administrateur, puis lance le diagnostic.
+  4. Attendre SUCCESS, puis lancer  test_ocr.bat  (2 à 4 minutes la première
+     fois) : lit une page de test avec le vrai moteur. À FAIRE avant la mise en
+     service : c'est la seule preuve que GPU, modèles et llama-server
+     fonctionnent ensemble.
+  5. Lancer  demarrer_ocr.bat  -> http://127.0.0.1:3050 (depuis ce poste)
+  6. Autres postes : ouvrir_pare_feu.bat (en administrateur), puis
+     http://ADRESSE_IP_DE_LA_STATION:3050
+
+Aucun accès internet n'est requis, ni pendant l'installation, ni à l'exécution.
+
+
+CE QUE LE COLIS CONTIENT
+------------------------
+  app\                      application (API FastAPI + interface compilée)
+  wheels\                   dépendances Python, roues binaires Windows x64
+                            (torch CUDA 12.6 inclus)
+  models\hf\                Surya 2 (GGUF), détecteur Heron, PaddleOCR-VL
+  models\datalab\           détecteur de lignes de Surya
+  llama\                    llama-server (CUDA) et les DLL CUDA 12
+  llama-cpu\                build processeur de secours (si fourni)
+  python\python-setup.exe   installeur Python 3.13 x64
+  installers\               redistribuable Microsoft Visual C++ x64
+  requirements.lock.txt     versions exactes des dépendances
+  empreintes.sha256         empreinte de chaque fichier
+  kit_manifest.json         traçabilité du colis
+
+CE QU'IL NE CONTIENT PAS
+------------------------
+  - Le pilote NVIDIA (déjà installé : « nvidia-smi » doit répondre).
+  - Ollama et ses modèles : facultatifs. Sans Ollama, l'OCR fonctionne ; seule
+    la correction automatique par l'IA est ignorée.
+  - Aucune base de données à installer : SQLite est un simple fichier,
+    <données>\db\ocr.sqlite3.
+
+
+SCRIPTS
+-------
+  demarrer_ocr.bat          lance l'application (API + worker, relancés s'ils
+                            tombent). Ctrl+C arrête tout proprement.
+  ouvrir_pare_feu.bat       autorise les ports 3050 et 8085 en entrée (administrateur) ; `supprimer` les referme
+  demarrage_auto.bat installer | supprimer
+                            démarrage automatique à l'ouverture de session
+  creer_admin.bat           crée un compte administrateur supplémentaire
+  diagnostic.bat            contrôle de l'installation (fichiers, base, GPU...)
+  test_ocr.bat              lecture d'une page de test par le vrai moteur
+  sauvegarder.bat [dossier] archive ZIP (base + fichiers), à chaud
+  restaurer.bat archive.zip restauration (application arrêtée)
+  verifier_colis.bat        contrôle d'intégrité du colis, à tout moment
+
+
+RÉGLAGES (dans l'application, Administration > Moteur OCR)
+----------------------------------------------------------
+  - Chemin de llama.cpp : rempli par défaut avec le dossier llama\ du colis.
+    Le bouton « Vérifier » contrôle qu'il démarre. Un second chemin (build
+    processeur) sert de secours.
+  - Largeur des pages données à Surya : « Auto » (200 dpi) par défaut ; 2000 à
+    2200 px donnent de meilleurs petits caractères et points de l'arabe, au prix
+    de la vitesse.
+  - Blocs lus en parallèle : 1 par défaut. Sur la RTX 3060 (12 Go), essayez 2
+    puis 4 ; chaque slot réserve sa part de VRAM.
+  Les changements s'appliquent au document suivant (le moteur redémarre seul).
+
+
+OÙ SONT RANGÉES LES DONNÉES
+---------------------------
+  Par défaut dans le dossier  data\  du colis. Pour les mettre sur un autre
+  disque, ouvrez ocr_env.bat et décommentez la ligne OCR_DATA_ROOT AVANT le
+  premier démarrage (ou déplacez ensuite data\ et ajustez la ligne).
+  À sauvegarder régulièrement (sauvegarder.bat), de préférence sur un AUTRE
+  disque. Activez BitLocker sur le disque des données.
+
+
+MISE À JOUR
+-----------
+  Sur la machine source : export_station.bat --maj  -> dossier maj_station\
+  (quelques Mo). Sur la station : appliquer_maj.bat C:\OCR (sauvegarde la
+  base, remplace le code, migre la base). Si torch ou les modèles changent,
+  refaire un export complet.
+
+
+LLAMA.CPP ET LA RTX 3060
+------------------------
+  Le llama-server fourni est celui de la machine source. S'il n'a pas de code
+  natif pour la RTX 3060 (architecture 86), le pilote NVIDIA recompile le code
+  intermédiaire (PTX) au PREMIER lancement : plusieurs minutes, une seule fois,
+  puis le résultat est mis en cache. Pour la vitesse maximale, compilez un build
+  « sm_86 » avec deploy\station\build-llama.bat sur une machine connectée, puis
+  refaites l'export (--llama-dir).
+
+
+EN CAS DE PROBLÈME
+------------------
+  Le script s'arrête au premier problème bloquant (FAILED) sans rien lancer.
+  Détail : logs\import.log et logs\pip.log. Relancer import_station.bat après
+  correction est sans danger : tout ce qui est en place est réutilisé.
+
+  "Colis incomplet ou abîmé"        la copie s'est mal passée : recopier le
+                                    dossier entier depuis la machine source.
+  "Python 3.13 x64 requis"          un autre Python passe avant dans le PATH.
+  "roue absente du colis"           wheels\ est incomplet : recopier.
+  KO « llama-server inutilisable »  DLL manquante : installer le redistribuable
+                                    Visual C++ (installers\) en administrateur,
+                                    vérifier le pilote NVIDIA (nvidia-smi).
+  Documents « En attente du GPU »   VRAM libre insuffisante (une autre
+                                    application occupe la carte) : le
+                                    traitement reprend seul dès qu'elle est
+                                    libre ; seuil réglable (Administration).
+  Pas de GPU / carte en panne       l'OCR repasse sur le processeur (très lent)
+                                    si « Repli sur le processeur » est activé.
+  Port déjà utilisé (code 4)        les ports sont dans ocr_env.bat : interface 3050
+                                    (OCR_FRONTEND_PORT), API 8085 (OCR_API_PORT),
+                                    llama.cpp 8091 (OCR_LLAMA_PORT ; le second
+                                    lecteur prend 8092).
+  Journaux                          <données>\logs\ (serve.log, api.log,
+                                    frontend.log, worker.log, llama-server.log).

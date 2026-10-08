@@ -13,11 +13,12 @@ import numpy as np
 
 from PIL import Image
 
-from app.core.config import get_settings
 from app.services.gpu import LlamaServer
+from app.services.ocr_config import OcrConfig
 from app.services.ocr import VISUAL_LABELS, OcrBlock, OcrPage
 from app.services.ocr.html_utils import escape, has_table_markup, to_text
-from app.services.ocr.layout_refine import RefinedBlock, area, has_printed_text, inter, refine, token_estimate
+from app.services.ocr.layout_refine import (RefinedBlock, area, fuse_detections, has_printed_text, inter, refine,
+                                             token_estimate)
 from app.services.stamps import erase_stamps
 
 log = logging.getLogger("ocr.surya2")
@@ -35,9 +36,11 @@ def token_budget(count: int) -> int:
 class Surya2Engine:
     name = "surya2"
 
-    def __init__(self, server: LlamaServer | None = None):
-        self.server = server or LlamaServer()
-        self._layout = self._rec = self._table = self._manager = self._det = None
+    def __init__(self, server: LlamaServer | None = None, config: OcrConfig | None = None):
+        self.config = config or OcrConfig.from_env()
+        self.server = server or LlamaServer(config=self.config)
+        self._layout = self._rec = self._table = self._manager = self._det = self._heron = None
+        self._heron_dets: list = []
 
     def start(self) -> None:
         self.server.start()
@@ -45,16 +48,30 @@ class Surya2Engine:
             self._load()
         except Exception:
             self.server.stop()  # sinon llama-server reste orphelin et occupe le port : « attente du GPU » sans fin
-            self._layout = self._rec = self._table = self._manager = self._det = None
+            self._layout = self._rec = self._table = self._manager = self._det = self._heron = None
             raise
 
+    def _surya_settings(self) -> dict[str, object]:
+        return {"SURYA_INFERENCE_BACKEND": "llamacpp", "SURYA_INFERENCE_URL": self.server.base_url,
+                "SURYA_INFERENCE_PARALLEL": max(1, self.config.llama_parallel), "SURYA_INFERENCE_AUTOSTART": False,
+                "SURYA_MAX_TOKENS_BLOCK_CEILING": self.config.block_token_ceiling}
+
     def _load(self) -> None:
-        # À fixer avant tout import de surya : ses réglages lisent l'environnement une seule fois.
-        os.environ["SURYA_INFERENCE_BACKEND"] = "llamacpp"
-        os.environ["SURYA_INFERENCE_URL"] = self.server.base_url
-        os.environ["SURYA_INFERENCE_PARALLEL"] = str(max(1, get_settings().llama_parallel))
-        os.environ["SURYA_INFERENCE_AUTOSTART"] = "false"
+        # À fixer avant le premier import de surya : ses réglages lisent l'environnement une seule fois...
+        wanted = self._surya_settings()
+        for k, v in wanted.items():
+            os.environ[k] = str(v).lower() if isinstance(v, bool) else str(v)
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        # ... puis réappliqués sur l'objet déjà chargé : un moteur redémarré après un changement de réglage
+        # (Administration > Moteur OCR) dans le même worker en tient compte.
+        try:
+            from surya.settings import settings as surya_settings
+
+            for k, v in wanted.items():
+                if hasattr(surya_settings, k):
+                    setattr(surya_settings, k, v)
+        except Exception as e:  # noqa: BLE001
+            log.warning("réglages de Surya non réappliqués (%s)", type(e).__name__)
         from surya.inference import SuryaInferenceManager
         from surya.layout import LayoutPredictor
         from surya.recognition import RecognitionPredictor
@@ -66,23 +83,52 @@ class Surya2Engine:
         self._table = TableRecPredictor(self._manager)
         self._manager.start()
         self._det = self._load_line_detector()
+        if self.config.layout_heron:
+            from app.services.ocr import heron
 
-    @staticmethod
-    def _load_line_detector():
+            self._heron = heron.load()
+
+    def _load_line_detector(self):
         """Détecteur de lignes de Surya (petit modèle torch), pour recaler la mise en page. Facultatif."""
-        s = get_settings()
-        if not s.layout_refine:
+        if not self.config.layout_refine:
             return None
         try:
             import torch
             from surya.detection import DetectionPredictor
 
+            device = self.config.line_detector_device
+            if device == "cuda" and not torch.cuda.is_available():
+                log.warning("détecteur de lignes : CUDA indisponible pour torch, repli sur le processeur")
+                device = "cpu"
             # Surya choisit la demi-précision dès qu'un GPU existe : sur processeur, c'est ~80 fois plus lent.
-            dtype = torch.float32 if s.line_detector_device == "cpu" else torch.float16
-            return DetectionPredictor.local(device=s.line_detector_device, dtype=dtype)
+            dtype = torch.float32 if device == "cpu" else torch.float16
+            return DetectionPredictor.local(device=device, dtype=dtype)
         except Exception as e:  # noqa: BLE001 - poids absents (hors ligne) : on garde la mise en page brute
             log.warning("détecteur de lignes indisponible (%s) : mise en page non recalée", type(e).__name__)
             return None
+
+    def _with_heron(self, image: Image.Image, layout):
+        """Second avis de Heron : zones sûres que Surya a sautées ajoutées à la mise en page."""
+        from surya.layout.schema import LayoutBox
+
+        try:
+            self._heron_dets = self._heron(image)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Heron en échec (%s) : mise en page de Surya seule", type(e).__name__)
+            self._heron_dets = []
+            return layout
+        fused, added = fuse_detections([(b.label, tuple(b.bbox)) for b in layout.bboxes], self._heron_dets)
+        if not added:
+            return layout
+        log.info("Heron : %d zone(s) ajoutée(s) à la mise en page", added)
+        boxes = []
+        for i, (label, (x0, y0, x1, y1), src) in enumerate(fused):
+            orig = layout.bboxes[src] if src is not None else None
+            boxes.append(LayoutBox(polygon=[[x0, y0], [x1, y0], [x1, y1], [x0, y1]], label=label,
+                                   raw_label=orig.raw_label if orig else label, position=i,
+                                   count=orig.count if orig else token_estimate([(x0, y0, x1, y1)]),
+                                   confidence=orig.confidence if orig else None))
+        return layout.model_copy(update={"bboxes": boxes})
 
     def _detect_lines(self, image: Image.Image) -> list | None:
         if self._det is None:
@@ -131,12 +177,14 @@ class Surya2Engine:
         if self._rec is None:
             raise RuntimeError("Moteur non démarré")
         rgb = np.asarray(image.convert("RGB"))
-        clean_bgr, stamps = (erase_stamps(np.ascontiguousarray(rgb[..., ::-1])) if get_settings().stamp_erase
+        clean_bgr, stamps = (erase_stamps(np.ascontiguousarray(rgb[..., ::-1])) if self.config.stamp_erase
                              else (None, []))
         clean = Image.fromarray(np.ascontiguousarray(clean_bgr[..., ::-1])) if stamps else image
         # Mise en page et lecture sur la page SANS tampons : un tampon n'est plus pris pour une image qui masque
         # le texte. Les tampons sont repérés à part (couleur) et ajoutés au document avec leur découpe d'origine.
         layout = self._layout([clean])[0]
+        if self._heron is not None and not layout.error:
+            layout = self._with_heron(clean, layout)
         lines = self._detect_lines(clean)
         if not layout.error and (lines is not None or stamps):
             layout = self._refined_layout(clean, layout, [s.bbox for s in stamps], lines)
@@ -156,9 +204,18 @@ class Surya2Engine:
                 html = self._table_html(clean, bbox) or html
             if b.label in TEXT_LABELS and not err and not to_text(html):
                 continue  # bloc de texte vide (zone sans texte lisible) : rien à garder
-            label = "Picture" if self._is_logo(np.asarray(clean), b.label, bbox, html) else b.label
+            logo = self._is_logo(np.asarray(clean), b.label, bbox, html) or self._heron_says_picture(b.label, bbox, html)
+            label = "Picture" if logo else b.label
             blocks.append(OcrBlock(label, html, bbox, float(b.confidence) if b.confidence is not None else None, err))
         return OcrPage(blocks)
+
+    def _heron_says_picture(self, label: str, bbox, html: str) -> bool:
+        """Bloc de texte court que Heron voit, avec assurance, comme une image (logo, emblème, cachet)."""
+        if label not in TEXT_LABELS or len(to_text(html)) > 40:
+            return False
+        a = area(bbox)
+        return a > 0 and any(lab == "Picture" and sc >= 0.85 and inter(box, bbox) >= 0.7 * a and area(box) <= 3 * a
+                             for lab, box, sc in self._heron_dets)
 
     @staticmethod
     def _is_logo(rgb: np.ndarray, label: str, bbox, html: str) -> bool:
@@ -257,5 +314,5 @@ class Surya2Engine:
             return None
 
     def stop(self) -> None:
-        self._layout = self._rec = self._table = self._manager = self._det = None
+        self._layout = self._rec = self._table = self._manager = self._det = self._heron = None
         self.server.stop()

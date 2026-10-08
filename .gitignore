@@ -19,3 +19,11 @@ frontend/dist/
 backend/data/
 *.pyc
 bundle/
+
+# Colis de la station (export_station.bat) et cache de préparation
+transfert_station/
+maj_station/
+.export_cache/
+
+# Configuration locale de Claude Code (chemins propres à ce poste)
+.claude/

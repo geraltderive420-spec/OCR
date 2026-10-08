@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models import Setting
 
 CLOUD_RE = re.compile(r"(:|-)cloud$", re.IGNORECASE)
@@ -29,8 +30,59 @@ DEFAULTS: dict[str, tuple[Any, type, float | None, float | None]] = {
     "docx_latin_font": ("Arial", str, None, None),  # police latine par défaut du DOCX (modifiable par document)
     "docx_arabic_font": ("Simplified Arabic", str, None, None),  # police du texte arabe dans le DOCX
     "docx_columns": (True, bool, None, None),  # reproduire les pages en deux colonnes
+    # --- Moteur OCR (Administration > Moteur OCR). Défaut : la valeur de backend/.env (OCR_...), voir ENV_DEFAULTS.
+    "llama_cpp_dir": ("", str, None, None),  # dossier contenant llama-server.exe (build CUDA)
+    "llama_cpp_cpu_dir": ("", str, None, None),  # build processeur de secours
+    "llama_parallel": (1, int, 1, 8),  # blocs d'une page lus en parallèle (chaque slot prend de la VRAM)
+    "llama_ngl": (99, int, 0, 999),  # couches sur le GPU (99 = toutes ; 0 = processeur seul)
+    "llama_ctx_size": (16384, int, 4096, 65536),  # contexte par slot
+    "cpu_fallback": (True, bool, None, None),  # sans GPU utilisable : OCR sur le processeur plutôt qu'un échec
+    "page_width": (0, int, 0, 4000),  # largeur des pages données à Surya en pixels (0 = auto, 200 dpi)
+    "block_token_ceiling": (8192, int, 1024, 32768),  # plafond de tokens générés par bloc
+    "layout_refine": (True, bool, None, None),  # recaler la mise en page sur les lignes détectées
+    "line_detector_device": ("cpu", str, None, None),  # cpu | cuda
+    "stamp_erase": (True, bool, None, None),  # lire la page sans l'encre des tampons
+    "layout_heron": (True, bool, None, None),  # second avis Heron sur la mise en page
+    "second_reader": (True, bool, None, None),  # seconde lecture PaddleOCR-VL des blocs douteux
+    "second_reader_threshold": (0.9, float, 0.0, 1.01),  # relire sous cette confiance
 }
-CHOICES = {"default_preprocess": {"auto", "leger", "delave", "tres_delave"}}
+CHOICES = {"default_preprocess": {"auto", "leger", "delave", "tres_delave"}, "line_detector_device": {"cpu", "cuda"}}
+PATH_KEYS = {"llama_cpp_dir", "llama_cpp_cpu_dir"}
+PAGE_WIDTH_MIN = 1000
+
+# Réglages dont la valeur par défaut vient de la configuration du poste (backend/.env) et non d'une constante :
+# l'installation fixe les chemins, l'administrateur peut ensuite les changer sans toucher au fichier.
+ENV_DEFAULTS: dict[str, Callable[[], Any]] = {
+    "llama_cpp_dir": lambda: str(get_settings().llama_cpp_dir or ""),
+    "llama_cpp_cpu_dir": lambda: str(get_settings().llama_cpp_cpu_dir or ""),
+    "llama_parallel": lambda: get_settings().llama_parallel,
+    "llama_ngl": lambda: get_settings().llama_ngl,
+    "llama_ctx_size": lambda: get_settings().llama_ctx_size,
+    "cpu_fallback": lambda: get_settings().cpu_fallback,
+    "page_width": lambda: get_settings().page_width,
+    "block_token_ceiling": lambda: get_settings().block_token_ceiling,
+    "layout_refine": lambda: get_settings().layout_refine,
+    "line_detector_device": lambda: get_settings().line_detector_device,
+    "stamp_erase": lambda: get_settings().stamp_erase,
+    "layout_heron": lambda: get_settings().layout_heron,
+    "second_reader": lambda: get_settings().second_reader,
+    "second_reader_threshold": lambda: get_settings().second_reader_threshold,
+}
+
+
+def default_value(key: str) -> Any:
+    if key in ENV_DEFAULTS:
+        try:
+            return _coerce(key, ENV_DEFAULTS[key]())
+        except SettingError:
+            pass
+    return DEFAULTS[key][0]
+
+
+def clean_path(value: str) -> str:
+    """Chemin collé depuis l'Explorateur : guillemets, espaces et séparateur final retirés."""
+    v = value.strip().strip('"').strip("'").strip()
+    return v.rstrip("\\/") if len(v) > 3 else v
 
 
 class SettingError(ValueError):
@@ -55,13 +107,17 @@ def _coerce(key: str, value: Any) -> Any:
         elif typ is float:
             value = float(value)
         else:
-            value = str(value).strip()
+            value = clean_path(str(value)) if key in PATH_KEYS else str(value).strip()
     except (TypeError, ValueError) as e:
         raise SettingError(f"Valeur invalide pour {key}") from e
     if lo is not None and value < lo or hi is not None and value > hi:
         raise SettingError(f"{key} doit être entre {lo} et {hi}")
     if key in CHOICES and value not in CHOICES[key]:
         raise SettingError(f"{key} doit être l'une des valeurs : {', '.join(sorted(CHOICES[key]))}")
+    if key == "page_width" and 0 < value < PAGE_WIDTH_MIN:
+        raise SettingError(f"La largeur des pages doit être 0 (automatique) ou au moins {PAGE_WIDTH_MIN} pixels.")
+    if key in PATH_KEYS and len(value) > 400:
+        raise SettingError("Chemin trop long.")
     if key in ("docx_latin_font", "docx_arabic_font") and not value:
         raise SettingError("Le nom de police ne peut pas être vide.")
     if key == "ollama_model":
@@ -79,18 +135,29 @@ def get_setting(db: Session, key: str) -> Any:
             return _coerce(key, row.value)
         except SettingError:
             pass
-    return DEFAULTS[key][0]
+    return default_value(key)
 
 
 def get_all(db: Session) -> dict[str, Any]:
     stored = {r.key: r.value for r in db.query(Setting).all()}
     out = {}
-    for key, (default, *_rest) in DEFAULTS.items():
+    for key in DEFAULTS:
         try:
-            out[key] = _coerce(key, stored[key]) if key in stored else default
+            out[key] = _coerce(key, stored[key]) if key in stored else default_value(key)
         except SettingError:
-            out[key] = default
+            out[key] = default_value(key)
     return out
+
+
+def reset_setting(db: Session, key: str) -> Any:
+    """Supprime la valeur enregistrée : le réglage reprend sa valeur par défaut (celle de backend/.env le cas échéant)."""
+    if key not in DEFAULTS:
+        raise SettingError(f"Paramètre inconnu : {key}")
+    row = db.get(Setting, key)
+    if row is not None:
+        db.delete(row)
+        db.flush()
+    return default_value(key)
 
 
 def set_setting(db: Session, key: str, value: Any) -> Any:

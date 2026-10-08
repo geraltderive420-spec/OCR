@@ -9,24 +9,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("OCR_SECRET_KEY", "cle-de-test-suffisamment-longue-pour-hs256")
 
 
-def _dotenv(key: str) -> str | None:
-    f = Path(__file__).resolve().parents[1] / ".env"
-    if f.exists():
-        for line in f.read_text(encoding="utf-8").splitlines():
-            if line.startswith(key + "="):
-                return line.split("=", 1)[1].strip()
-    return None
-
-
 @pytest.fixture()
 def app_env(tmp_path, monkeypatch):
-    """Base SQLite et dossier de données isolés pour chaque test."""
-    # OCR_TEST_DATABASE_URL (MariaDB de test) : mêmes tests sur la vraie base ; sinon SQLite isolé.
-    test_url = os.environ.get("OCR_TEST_DATABASE_URL") or _dotenv("OCR_TEST_DATABASE_URL")
-    use_maria = bool(test_url) and os.environ.get("OCR_TEST_SQLITE") != "1"
-    monkeypatch.setenv("OCR_DATABASE_URL", test_url if use_maria else f"sqlite:///{(tmp_path / 'test.db').as_posix()}")
+    """Base SQLite et dossier de données isolés pour chaque test (même moteur qu'en production)."""
+    monkeypatch.setenv("OCR_DATABASE_URL", f"sqlite:///{(tmp_path / 'test.db').as_posix()}")
     monkeypatch.setenv("OCR_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("OCR_OCR_BACKEND", "dummy")
+    monkeypatch.setenv("OCR_SECOND_READER", "false")  # jamais de vrai serveur PaddleOCR-VL dans les tests
+    monkeypatch.setenv("OCR_LAYOUT_HERON", "false")
     from app.core import config, db
 
     # Les tests ignorent backend/.env (réglages de développement : moteur OCR réel, chemins...).

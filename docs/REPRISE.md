@@ -14,9 +14,11 @@ Le développement des phases 1 à 9 est terminé et testé en développement (vo
 
 ## À mesurer sur la RTX 3060 (production)
 
-- [ ] Compiler (ou copier) un `llama-server` **arch 86** et renseigner `OCR_LLAMA_CPP_DIR`.
-- [ ] Lancer `python -m app.cli check` puis traiter quelques pages : vitesse réelle (la 1050 Ti donne ~93 s/page, la 3060
-      devrait être bien plus rapide), VRAM, démarrage de `llama-server`, arrêt après inactivité, cohabitation avec vos autres applications.
+- [ ] Fabriquer le colis (`export_station.bat`), le copier, `verifier_colis.bat`, `import_station.bat`, puis **`test_ocr.bat`**
+      (premier lancement : si le `llama-server` n'a pas de code natif `sm_86`, le pilote recompile le PTX, plusieurs minutes).
+- [ ] Si trop lent au démarrage ou à l'usage : compiler un build 86 (`deploy\station\build-llama.bat`) et refaire l'export.
+- [ ] Traiter quelques pages : vitesse réelle (la 1050 Ti donne ~93 s/page), VRAM, arrêt après inactivité, cohabitation
+      avec vos autres applications ; essayer `llama_parallel` 2 puis 4 et `page_width` 2000-2200 (Administration > Moteur OCR).
 - [ ] Tester l'encodeur d'image : sur la 1050 Ti il reste sur le processeur (« CLIP using CPU backend ») ; vérifier s'il passe sur le GPU en 3060.
 
 ## À faire avec vos vrais scans (jamais dans le dépôt)
@@ -31,9 +33,10 @@ Le développement des phases 1 à 9 est terminé et testé en développement (vo
 ## Installation de production
 
 - [ ] Suivre `docs/INSTALLATION.md` ; **tester l'installation câble réseau débranché** (critère d'acceptation de la phase 9).
-- [ ] BitLocker sur le disque de données ; distribuer `server.crt` aux postes ; planifier `backup.ps1`.
-- [ ] Les scripts PowerShell (`deploy/windows`) sont vérifiés syntaxiquement mais n'ont pas pu être exécutés sur une
-      machine de production : prévoir une première installation « à blanc » et corriger ce qui s'impose.
+- [ ] BitLocker sur le disque de données ; planifier `sauvegarder.bat` vers un autre disque.
+- [ ] Les scripts `.bat` du colis sont contrôlés par `deploy\stationerifier_bat.py` et l'installation hors ligne a été
+      rejouée sur le poste de développement (venv neuf, `pip --no-index`), mais **jamais sur la station** : prévoir une
+      première installation « à blanc » et corriger ce qui s'impose.
 
 ## Limites connues
 
@@ -44,11 +47,26 @@ Le développement des phases 1 à 9 est terminé et testé en développement (vo
 ## Nettoyage possible
 
 - `D:\ocr_work\` (≈ 10 Go) : environnement et poids de PaddleOCR-VL, abandonné (`venv\paddlevl`, `hf`, `paddlex`, caches pip / npm).
-  À supprimer si vous ne voulez pas relancer ce test. Le cache npm de l'interface est dans `D:\ocr_work\npm`.
-- `backend/data/` (documents de démonstration créés pendant le développement) et la base `ocr_dev` / `ocr_test` de MariaDB
-  (utilisateur `ocr_app`, mot de passe dans `backend/.env`, ignoré par git) : à supprimer avant la mise en production.
-- Le compte `admin` de démonstration créé dans `ocr_dev` (mot de passe de test) : à supprimer avec la base de développement.
+- `D:\ocr_export\` : colis et cache de préparation de l'export (≈ 10 Go chacun mais liés : même volume, liens physiques).
+- La base MariaDB `ocr_dev` / `ocr_test` (utilisateur `ocr_app`) n'est plus utilisée : l'application est passée à SQLite
+  (`data\db\ocr.sqlite3`). Les lignes MariaDB de `backend/.env` ont été commentées.
+- Le compte `demo` (`seed-dev`) est un compte de développement : ne pas le créer en production.
 
+## Passage à SQLite, traitement par lot, interface (08/10/2026)
+
+- **SQLite** (WAL, attente sur verrou 30 s) remplace MariaDB : plus aucun serveur de base. Migration Alembic `0003`
+  (lots, annulation, début de traitement) testée sur base peuplée ; `python -m app.cli migrate` fait une copie avant.
+- **Lots** : `/api/batches`, page *Lots* (progression pondérée par les pages, durée restante, annulation, relance, export
+  groupé, ZIP) ; envois par deux avec progression ; images JPEG/PNG/TIFF acceptées (converties en PDF).
+- **Moteur OCR configurable** dans l'interface (chemin llama.cpp + vérification, largeur des pages, slots, plafond de
+  tokens, repli processeur...) ; valeurs par défaut = `backend/.env`.
+- **Robustesse** : `python -m app.serve` (supervision, migration), verrou d'instance unique du worker, `llama-server` lié
+  à la vie du worker (Job Object Windows), nettoyage des serveurs orphelins par PID vérifié, repli GPU → CPU,
+  battement de cœur du worker affiché dans l'interface, sauvegarde/restauration intégrées.
+- **Export de la station** : `export_station.bat` (voir `docs/INSTALLATION.md`).
+- Les anciens scripts `deploy/windows` (MariaDB, NSSM, 7-Zip) sont supprimés ; `build-bundle.ps1` est remplacé par
+  `deploy/station/export_kit.py`.
+- [ ] À faire : vérifier l'interface sur grand lot réel (100+ fichiers), et l'arabe (RTL) dans les nouvelles pages.
 
 ## Améliorations de qualité du 07/10/2026 (mesurées)
 
@@ -124,3 +142,21 @@ Corrigé à partir d'un courrier bilingue jugé « catastrophique » (en-tête F
 - **Police** : choisie à l'envoi (Arial par défaut ; Times New Roman pour le Journal officiel). Elle n'est pas détectée
   automatiquement : l'essai (empattements) marchait sur le courrier mais échouait sur le Journal officiel.
 - Limite : une ligne coupée par le bord du scan reste illisible.
+
+## Second avis et seconde lecture (07/10/2026)
+
+Recherche de technologies (LayoutParser abandonné depuis 2022 ; DocLayout-YOLO en AGPL, sans arabe ni tampons ;
+gros modèles de 6-7 Go écartés) puis intégration de deux briques légères, Apache-2.0, servies hors ligne :
+
+- **Heron** (Docling, `docling-project/docling-layout-heron`, ~170 Mo, processeur) : second avis sur la mise en page.
+  Surya reste la référence ; Heron n'ajoute que les zones sûres (score ≥ 0,6) que Surya n'a pas couvertes, et confirme
+  les logos. Très bon sur les courriers, moins bon que Surya sur les couvertures à grands tableaux. `OCR_LAYOUT_HERON`.
+- **PaddleOCR-VL 1.5** (`PaddlePaddle/PaddleOCR-VL-1.5-GGUF`, 1,8 Go, second `llama-server` sur le port suivant) :
+  relit les blocs dont la confiance de Surya est sous `OCR_SECOND_READER_THRESHOLD` (0,9). Lectures concordantes :
+  bloc sûr ; désaccord : bloc « à vérifier », et la seconde lecture remplace la première si elle est nettement plus
+  sûre ou plus complète (correction « Seconde lecture », annulable en relecture). Lecture qui boucle refusée.
+  Sur 4 Go, le serveur de Surya est arrêté avant la seconde lecture. `OCR_SECOND_READER`.
+
+Mesures : sur les 12 pages de référence, aucun gain ni perte (Surya 89,9 % / 85,2 %, PaddleOCR-VL seul 89,6 % / 85,3 %,
+86 % des blocs concordent) ; sur le courrier réel, la ligne d'en-tête coupée par le bord du scan, illisible pour Surya,
+est lue presque juste. Coût : ~25 s par page pour relire tous les blocs, quelques secondes pour les seuls douteux.

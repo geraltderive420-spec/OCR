@@ -154,3 +154,27 @@ def test_serveur_arrete_si_surya_ne_demarre_pas(monkeypatch):
     with pytest.raises(ImportError):
         eng.start()
     assert srv.started and srv.stopped and eng._rec is None
+
+
+def test_llama_server_adresse_d_ecoute_configurable(app_env, monkeypatch):
+    """OCR_LLAMA_HOST : 0.0.0.0 expose llama-server au réseau ; le worker s'y connecte toujours en local."""
+    from pathlib import Path
+
+    from app.core import config
+    from app.services.ocr_config import OcrConfig
+
+    d = Path(app_env) / "llama"
+    d.mkdir()
+    (d / gpu.EXE).write_bytes(b"x")
+
+    def host_of(env):
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+        config.reset_settings_cache()
+        srv = LlamaServer(config=OcrConfig(llama_cpp_dir=d), model_files=lambda: ("m", "p"))
+        cmd = srv._llama_cmd(d / gpu.EXE, 99)
+        return cmd[cmd.index("--host") + 1], srv.base_url
+
+    assert host_of({}) == ("127.0.0.1", "http://127.0.0.1:%d/v1" % LlamaServer(config=OcrConfig()).port)
+    assert host_of({"OCR_LLAMA_HOST": "0.0.0.0"})[0] == "0.0.0.0"
+    assert host_of({"OCR_LLAMA_HOST": "0.0.0.0"})[1].startswith("http://127.0.0.1:")

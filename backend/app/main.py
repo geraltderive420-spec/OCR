@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import admin, auth, documents, meta
+from app.api import admin, auth, batches, documents, meta
 from app.core.config import DEFAULT_SECRET, get_settings
 from app.core.db import init_engine
 
@@ -16,13 +17,25 @@ log = logging.getLogger("ocr.api")
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
+def _clean_tmp(folder: Path, max_age_hours: float = 12) -> None:
+    """Archives ZIP de lots restées après un arrêt brutal."""
+    limit = time.time() - max_age_hours * 3600
+    for f in folder.glob("*"):
+        try:
+            if f.is_file() and f.stat().st_mtime < limit:
+                f.unlink()
+        except OSError:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     s = get_settings()
     if s.secret_key == DEFAULT_SECRET:
         log.warning("OCR_SECRET_KEY par défaut : à changer avant toute mise en production.")
-    for sub in ("uploads", "pages", "crops", "exports", "logs"):
+    for sub in ("uploads", "pages", "crops", "exports", "logs", "tmp"):
         (s.data_dir / sub).mkdir(parents=True, exist_ok=True)
+    _clean_tmp(s.data_dir / "tmp")
     init_engine()
     yield
 
@@ -50,7 +63,7 @@ def create_app() -> FastAPI:
     def health() -> dict:
         return {"status": "ok"}
 
-    for r in (auth.router, documents.router, admin.router, meta.router):
+    for r in (auth.router, documents.router, batches.router, admin.router, meta.router):
         app.include_router(r, prefix="/api")
 
     if FRONTEND_DIST.is_dir():  # interface compilée servie par FastAPI (production)

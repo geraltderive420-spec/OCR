@@ -2,7 +2,9 @@ import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { fr } from "../i18n/fr";
-import { Card, ErrorMessage } from "../components/common";
+import { Alert, ErrorMessage } from "../components/common";
+import { Icon } from "../components/Icon";
+import { AuthArt } from "./Login";
 
 export default function ChangePassword() {
   const { changePassword, user } = useAuth();
@@ -24,18 +26,22 @@ export default function ChangePassword() {
   }
 
   return (
-    <div className="center">
-      <Card title={fr.password.title}>
-        {user?.must_change_password && <p>{fr.password.intro}</p>}
-        <form onSubmit={submit} className="form">
-          <label>{fr.password.old}<input type="password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} autoComplete="current-password" required /></label>
-          <label>{fr.password.next}<input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} autoComplete="new-password" required minLength={10} /></label>
-          <label>{fr.password.confirm}<input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" required /></label>
-          <p className="muted">{fr.password.rules}</p>
+    <div className="auth">
+      <AuthArt />
+      <div className="auth-form">
+        <form onSubmit={submit} className="box">
+          <h2>{fr.password.title}</h2>
+          {user?.must_change_password && <Alert tone="info">{fr.password.intro}</Alert>}
+          <div className="form">
+            <label>{fr.password.old}<input type="password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} autoComplete="current-password" required /></label>
+            <label>{fr.password.next}<input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} autoComplete="new-password" required minLength={10} /></label>
+            <label>{fr.password.confirm}<input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" required /></label>
+            <p className="help">{fr.password.rules}</p>
+          </div>
           <ErrorMessage error={error} />
-          <button className="primary">{fr.password.submit}</button>
+          <button className="primary lg"><Icon name="check" />{fr.password.submit}</button>
         </form>
-      </Card>
+      </div>
     </div>
   );
 }

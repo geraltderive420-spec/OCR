@@ -19,18 +19,19 @@
   en-têtes de sécurité (CSP, `X-Frame-Options`, `nosniff`, `no-store`) ; pas de documentation d'API exposée.
 - **Hors ligne** : `HF_HUB_OFFLINE=1`, aucun téléchargement à l'exécution ; un test échoue en cas d'appel réseau sortant ;
   seuls les modèles Ollama **locaux** sont acceptés (les modèles `:cloud` sont refusés par l'application).
-- **Services locaux** : `llama-server`, Ollama et MariaDB n'écoutent qu'en `127.0.0.1`.
+- **Services** : en développement, `llama-server`, Ollama et l'API n'écoutent qu'en `127.0.0.1`. La station écoute sur `0.0.0.0` pour l'interface (3050) et l'API (8085) seulement (voir `INSTALLATION.md` §4) ; `llama-server` (8091/8092, sans authentification) et Ollama restent en `127.0.0.1`, appelés uniquement depuis le poste ; la base est un simple fichier SQLite.
 
 ## À faire côté poste (hors application)
 
 1. **BitLocker** sur le disque de données (chiffrement au repos). Un chiffrement applicatif des fichiers reste possible
    en option (clé hors base) : non activé par défaut.
-2. **Pare-feu** : `firewall.ps1` n'autorise l'entrée que depuis le sous-réseau local sur le port HTTPS et bloque la
-   sortie de Python, llama-server et Ollama. Désactiver les mises à jour automatiques d'Ollama.
+2. **Pare-feu** (surtout si l'application est ouverte au réseau) : `deploy\windowsirewall.ps1` bloque la sortie de
+   Python, llama-server et Ollama et, avec `-AllowInbound`, n'ouvre le port qu'au sous-réseau local. Désactiver les mises à jour automatiques d'Ollama.
 3. **Certificat** : `make_cert.py` produit un certificat interne auto-signé ; le distribuer aux postes clients, ou le
    remplacer par un certificat de l'autorité interne.
-4. **Sauvegardes** : `backup.ps1` chiffre en AES-256 (7-Zip) ; le mot de passe est conservé hors du poste.
-5. Droits NTFS : `.env` et `server.key` ne sont lisibles que par SYSTEM et les administrateurs (appliqué par `install.ps1`).
+4. **Sauvegardes** : `sauvegarder.bat` produit une archive ZIP **non chiffrée** : la placer sur un disque ou une clé
+   chiffrés (BitLocker To Go), hors du poste.
+5. Droits NTFS : restreindre `app\backend\.env` (clé de signature) et `server.key` à l'administrateur du poste.
 
 ## Pendant le développement
 

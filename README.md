@@ -9,7 +9,8 @@ local complètent le traitement.
 - `backend/` : API FastAPI, worker, services (prétraitement, OCR, correction, DOCX), migrations Alembic, tests.
 - `frontend/` : interface React + TypeScript (Vite).
 - `tools/` : outils de la phase 0 (dégradation d'échantillons, évaluation chiffrée, adaptateurs de moteurs OCR).
-- `deploy/windows/` : installation hors ligne, services, pare-feu, sauvegarde, mise à jour.
+- `deploy/station/` : export du colis hors ligne pour la station (RTX 3060), scripts d'installation et de maintenance.
+- `deploy/windows/` : pare-feu et certificat HTTPS facultatifs, lancement en développement.
 - `docs/` : installation, exploitation, sécurité, architecture, reprise.
 
 ## Démarrage en développement
@@ -17,18 +18,20 @@ local complètent le traitement.
 ```powershell
 # Environnement : .venv-surya2 (Python 3.13, torch, surya-ocr 0.22.1) + dépendances de backend\requirements.txt
 cd backend
-copy .env.example .env           # puis adapter (base, OCR_LLAMA_CPP_DIR...) ; OCR_OCR_BACKEND=dummy pour tester sans GPU
-..\.venv-surya2\Scripts\python.exe -m alembic upgrade head
-..\.venv-surya2\Scripts\python.exe -m app.cli create-admin admin
-..\deploy\windows\start-dev.ps1   # API :8000, worker, interface :5173
+copy .env.example .env           # puis adapter (OCR_SECRET_KEY, OCR_LLAMA_CPP_DIR...) ; OCR_OCR_BACKEND=dummy pour tester sans GPU
+..\.venv-surya2\Scripts\python.exe -m app.cli seed-dev       # compte de développement (la base SQLite est créée seule)
+..\.venv-surya2\Scripts\python.exe -m app.serve              # base + API + interface + worker : http://127.0.0.1:3050 (API 8085, llama.cpp 8091)
 ```
+
+Base : **SQLite** (`backend/data/db/ocr.sqlite3`), aucun serveur à installer. Interface en développement avec
+rechargement : `cd frontend ; npm run dev` (port 5173). Export pour la station : `export_station.bat` (voir
+`docs/INSTALLATION.md`).
 
 ## Tests
 
 ```powershell
-cd backend ; ..\.venv-surya2\Scripts\python.exe -m pytest        # 65+ tests ; MariaDB de test si OCR_TEST_DATABASE_URL est défini
+cd backend ; ..\.venv-surya2\Scripts\python.exe -m pytest        # 120+ tests (SQLite isolée pour chaque test)
 cd frontend ; npm test ; npm run build
 ```
 
-Les tests de l'API tournent sur MariaDB réelle (base `ocr_test`) ou SQLite (`OCR_TEST_SQLITE=1`). Un test échoue en cas
-d'appel réseau sortant.
+Chaque test a sa propre base SQLite. Un test échoue en cas d'appel réseau sortant.

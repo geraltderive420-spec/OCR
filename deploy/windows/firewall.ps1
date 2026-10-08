@@ -1,27 +1,34 @@
 <#
-.SYNOPSIS  Règles du pare-feu Windows : entrée HTTPS depuis le réseau local seulement, sortie bloquée pour l'application.
+.SYNOPSIS  Pare-feu Windows (facultatif) : entrée depuis le réseau local seulement, sortie bloquée pour l'application.
 .DESCRIPTION
-  Le trafic bouclé (127.0.0.1) n'est pas filtré par le pare-feu : MariaDB, Ollama et llama-server restent joignables
-  en local, mais l'application et ses programmes ne peuvent joindre aucun autre hôte (PLAN.md §4 bis).
+  Utile seulement si l'application est ouverte au réseau (OCR_API_HOST=0.0.0.0) ou sur un poste qui n'est pas
+  physiquement isolé. Le trafic bouclé (127.0.0.1) n'est pas filtré : Ollama et llama-server restent joignables en
+  local, mais l'application et ses programmes ne peuvent joindre aucun autre hôte (PLAN.md §4 bis).
+  À lancer dans un PowerShell administrateur.
+.EXAMPLE   .\firewall.ps1 -KitDir C:\OCR -Port 8000
 #>
 param(
-    [string]$InstallDir = "C:\ocr-app",
-    [int]$Port = 8443,
-    [string]$LlamaDir = "C:\LLAMA.CPP.CUDA\llama.cpp\build\bin\Release",
-    [string]$LocalSubnet = "LocalSubnet"
+    [string]$KitDir = "C:\OCR",
+    [int]$Port = 8000,
+    [string]$LocalSubnet = "LocalSubnet",
+    [switch]$AllowInbound
 )
 . "$PSScriptRoot\common.ps1"
 Require-Admin
 
-Step "Entrée : HTTPS $Port depuis $LocalSubnet seulement"
-Get-NetFirewallRule -DisplayName "OCR - HTTPS entrant" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-New-NetFirewallRule -DisplayName "OCR - HTTPS entrant" -Direction Inbound -Protocol TCP -LocalPort $Port -RemoteAddress $LocalSubnet -Action Allow -Profile Domain, Private | Out-Null
+if ($AllowInbound) {
+    Step "Entrée : port $Port depuis $LocalSubnet seulement"
+    Get-NetFirewallRule -DisplayName "OCR - entrant" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+    New-NetFirewallRule -DisplayName "OCR - entrant" -Direction Inbound -Protocol TCP -LocalPort $Port -RemoteAddress $LocalSubnet -Action Allow -Profile Domain, Private | Out-Null
+    Ok "port $Port ouvert au réseau local"
+}
 
 Step "Sortie bloquée pour l'application, llama-server et Ollama"
-$programs = @{
-    "OCR - sortie bloquée (python)"       = (Get-VenvPython $InstallDir)
-    "OCR - sortie bloquée (llama-server)" = (Join-Path $LlamaDir "llama-server.exe")
-    "OCR - sortie bloquée (ollama)"       = (Join-Path $env:LOCALAPPDATA "Programs\Ollama\ollama.exe")
+$programs = [ordered]@{
+    "OCR - sortie bloquée (python)"          = (Join-Path $KitDir ".venv\Scripts\python.exe")
+    "OCR - sortie bloquée (llama-server)"    = (Join-Path $KitDir "llama\llama-server.exe")
+    "OCR - sortie bloquée (llama-server cpu)" = (Join-Path $KitDir "llama-cpu\llama-server.exe")
+    "OCR - sortie bloquée (ollama)"          = (Join-Path $env:LOCALAPPDATA "Programs\Ollama\ollama.exe")
 }
 foreach ($name in $programs.Keys) {
     Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue | Remove-NetFirewallRule

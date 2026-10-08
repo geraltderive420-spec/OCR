@@ -4,6 +4,10 @@
     python -m app.cli purge
     python -m app.cli seed-dev                         (compte de DÉVELOPPEMENT « demo », refusé en production)
     python -m app.cli check                            (auto-diagnostic : configuration, base, moteur OCR, Ollama)
+    python -m app.cli selftest                         (lit une page de test avec le VRAI moteur OCR : GPU, modèles, serveur)
+    python -m app.cli migrate                          (met la base au niveau du code, copie de sécurité avant)
+    python -m app.cli backup <dossier> [--garder 30]   (archive ZIP : base + fichiers, à chaud)
+    python -m app.cli restore <archive.zip>            (application ARRÊTÉE ; la base actuelle est d'abord copiée)
 """
 from __future__ import annotations
 
@@ -57,6 +61,53 @@ def seed_dev() -> int:
     return 0
 
 
+def selftest() -> int:
+    """Démarre le moteur OCR réel, lit une page générée et vérifie le texte : prouve que GPU, modèles et llama-server
+    fonctionnent ENSEMBLE sur ce poste (le diagnostic `check` ne vérifie que la présence des fichiers)."""
+    import time
+
+    from PIL import Image, ImageDraw, ImageFont
+
+    from app.services.ocr.html_utils import to_text
+    from app.services.ocr_config import OcrConfig
+    from app.worker.runner import make_engine
+
+    cfg = OcrConfig.load()
+    img = Image.new("RGB", (1240, 800), "white")
+    draw = ImageDraw.Draw(img)
+    font = None
+    for name in ("arial.ttf", "segoeui.ttf", "DejaVuSans.ttf"):
+        try:
+            font = ImageFont.truetype(name, 46)
+            break
+        except OSError:
+            continue
+    font = font or ImageFont.load_default(size=46)
+    for i, line in enumerate(("REPUBLIQUE FRANCAISE", "Courrier de test numero 2026", "Objet : verification du moteur OCR")):
+        draw.text((90, 120 + i * 110), line, fill="black", font=font)
+    engine = make_engine(cfg)
+    t0 = time.time()
+    try:
+        print(f"Moteur : {cfg.backend} ; démarrage du serveur d'inférence (peut prendre 1 à 3 minutes)...")
+        engine.start()
+        mode = getattr(getattr(engine, "server", None), "mode", "gpu")
+        print(f"Serveur prêt en {time.time() - t0:.0f} s ({'processeur (repli)' if mode == 'cpu' else 'GPU'}).")
+        t1 = time.time()
+        page = engine.recognize(img)
+        text = " ".join(to_text(b.html) for b in page.blocks).lower()
+        print(f"Page lue en {time.time() - t1:.0f} s : {len(page.blocks)} bloc(s).")
+    except Exception as e:  # noqa: BLE001
+        print(f"KO : le moteur OCR n'a pas fonctionné ({type(e).__name__}: {e})", file=sys.stderr)
+        return 1
+    finally:
+        engine.stop()
+    if cfg.backend != "dummy" and not ("2026" in text and "courrier" in text):
+        print("KO : le texte de la page de test n'a pas été reconnu.", file=sys.stderr)
+        return 1
+    print("OK : le moteur OCR lit correctement une page.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m app.cli")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -65,8 +116,37 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("purge")
     sub.add_parser("check")
     sub.add_parser("seed-dev")
+    sub.add_parser("migrate")
+    sub.add_parser("selftest")
+    sub.add_parser("has-users")
+    b = sub.add_parser("backup")
+    b.add_argument("destination")
+    b.add_argument("--garder", type=int, default=30)
+    r = sub.add_parser("restore")
+    r.add_argument("archive")
     args = ap.parse_args(argv)
     init_engine()
+    if args.cmd == "selftest":
+        return selftest()
+    if args.cmd == "has-users":  # code de sortie 0 : au moins un compte existe (utilisé par l'installation)
+        with session_scope() as db:
+            return 0 if db.scalar(select(User.id).limit(1)) is not None else 1
+    if args.cmd in ("migrate", "backup", "restore"):
+        from pathlib import Path
+
+        from app import maintenance
+
+        try:
+            if args.cmd == "migrate":
+                print(maintenance.migrate(backup=True))
+            elif args.cmd == "backup":
+                print(f"Sauvegarde : {maintenance.backup(Path(args.destination), keep=args.garder)}")
+            else:
+                print(maintenance.restore(Path(args.archive)))
+        except Exception as e:  # noqa: BLE001
+            print(f"Échec : {e}", file=sys.stderr)
+            return 1
+        return 0
     if args.cmd == "create-admin":
         return create_admin(args.username)
     if args.cmd == "seed-dev":

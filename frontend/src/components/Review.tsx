@@ -4,7 +4,8 @@ import { api } from "../api/client";
 import type { BlockData, Correction, DocDetail, PageData } from "../api/types";
 import { diffWords, stripTags } from "../lib/diff";
 import { fr, label } from "../i18n/fr";
-import { ErrorMessage, Loading, useAuthedImage } from "./common";
+import { ErrorMessage, Loading, useAuthedImage, useConfirm } from "./common";
+import { Icon } from "./Icon";
 
 const VISUAL = new Set(["Picture", "Figure", "Diagram", "Image", "Stamp"]);
 // Types qu'on peut attribuer à un bloc mal détecté (miroir de EDITABLE_LABELS côté serveur).
@@ -44,16 +45,23 @@ export default function Review({ doc }: { doc: DocDetail }) {
   const total = doc.page_count;
   const page = q.data;
   return (
-    <div className="review">
-      <div className="review-bar">
-        <button onClick={() => setIndex(Math.max(0, index - 1))} disabled={index === 0} aria-label="Page précédente">‹</button>
-        <span>{fr.review.page} {index + 1} {fr.review.of} {total}</span>
-        <button onClick={() => setIndex(Math.min(total - 1, index + 1))} disabled={index >= total - 1} aria-label="Page suivante">›</button>
-        <label className="check"><input type="checkbox" checked={onlyToCheck} onChange={(e) => setOnlyToCheck(e.target.checked)} />{fr.review.onlyToCheck}</label>
+    <div className="stack">
+      <div className="card review-bar">
+        <Icon name="edit" className="muted" />
+        <b>{fr.doc.review}</b>
+        <span className="spacer" />
+        <button className="icon-btn" onClick={() => setIndex(Math.max(0, index - 1))} disabled={index === 0} aria-label="Page précédente"><Icon name="left" /></button>
+        <span className="num">{fr.review.page} <b>{index + 1}</b> {fr.review.of} {total}</span>
+        <button className="icon-btn" onClick={() => setIndex(Math.min(total - 1, index + 1))} disabled={index >= total - 1} aria-label="Page suivante"><Icon name="right" /></button>
+        <span className="spacer" />
+        <label className="switch" style={{ alignItems: "center" }}>
+          <input type="checkbox" checked={onlyToCheck} onChange={(e) => setOnlyToCheck(e.target.checked)} />
+          <span className="track" /><span className="txt"><b style={{ fontSize: ".85rem" }}>{fr.review.onlyToCheck}</b></span>
+        </label>
       </div>
       <ErrorMessage error={q.error} />
       {q.isLoading && <Loading />}
-      {page && page.status === "error" && <p className="warn">{fr.doc.pageError}</p>}
+      {page && page.status === "error" && <p className="warn"><Icon name="alert" /> {fr.doc.pageError}</p>}
       {page && page.status !== "error" && (
         <div className="review-grid">
           <div className="scan">
@@ -94,7 +102,7 @@ export default function Review({ doc }: { doc: DocDetail }) {
                 }}
               />
             ))}
-            {blocks.length === 0 && <p className="muted">—</p>}
+            {blocks.length === 0 && <p className="muted card card-pad">—</p>}
           </div>
         </div>
       )}
@@ -108,6 +116,7 @@ function BlockCard({ block, active, onHover, onSelect, onChange, onDelete }: {
 }) {
   const [version, setVersion] = useState(0);
   const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
+  const confirm = useConfirm();
   const editor = useRef<HTMLDivElement>(null);
   const crop = useAuthedImage(VISUAL.has(block.label) && block.has_crop ? `/blocks/${block.id}/crop` : null);
 
@@ -169,17 +178,20 @@ function BlockCard({ block, active, onHover, onSelect, onChange, onDelete }: {
         </select>
         {block.confidence !== null && <span className="muted">{fr.review.confidence} {Math.round(block.confidence * 100)} %</span>}
         {block.to_check && (
-          <button className="chip warn" onClick={(e) => { e.stopPropagation(); verified.mutate(); }} title="Marquer comme vérifié">{fr.review.toCheck} ✓</button>
+          <button className="chip warn" onClick={(e) => { e.stopPropagation(); verified.mutate(); }} title={fr.review.markChecked}>{fr.review.toCheck} <Icon name="check" /></button>
         )}
         <span className="spacer" />
         <span className="muted">{state === "saving" ? fr.review.saving : state === "saved" ? fr.review.saved : ""}</span>
         <button
-          className="small"
+          className="ghost icon-btn danger"
           title={fr.review.deleteBlock}
           aria-label={fr.review.deleteBlock}
           disabled={remove.isPending}
-          onClick={(e) => { e.stopPropagation(); if (window.confirm(fr.review.deleteConfirm)) remove.mutate(); }}
-        >✕</button>
+          onClick={async (e) => {
+            e.stopPropagation();
+            if ((await confirm({ title: fr.review.deleteConfirm, danger: true, confirm: fr.review.deleteBlock })) !== false) remove.mutate();
+          }}
+        ><Icon name="trash" /></button>
       </header>
       {crop && <img className="crop" src={crop} alt={label(block.label)} />}
       {!VISUAL.has(block.label) && (
@@ -196,7 +208,7 @@ function BlockCard({ block, active, onHover, onSelect, onChange, onDelete }: {
       )}
       {block.corrections.filter((c) => c.status !== "rejected").map((c) => (
         <div className={`correction ${c.status}`} key={c.id}>
-          <div className="muted">{c.status === "proposed" ? fr.review.proposal : c.status === "auto_applied" || c.status === "accepted" ? fr.review.applied : ""}{c.model ? ` (${c.model})` : ""}</div>
+          <div className="muted">{c.source === "ocr2" ? fr.review.secondReading : c.status === "proposed" ? fr.review.proposal : c.status === "auto_applied" || c.status === "accepted" ? fr.review.applied : ""}{c.model ? ` (${c.model})` : ""}</div>
           <p dir={block.direction} className="diff">
             {diffWords(stripTags(c.before), stripTags(c.after)).map((p, i) => <span key={i} className={p.kind}>{p.text}</span>)}
           </p>

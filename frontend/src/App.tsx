@@ -4,6 +4,8 @@ import { useAuth } from "./auth/AuthContext";
 import Layout from "./components/Layout";
 import { Loading } from "./components/common";
 import Admin from "./pages/Admin";
+import BatchPage from "./pages/BatchPage";
+import Batches from "./pages/Batches";
 import ChangePassword from "./pages/ChangePassword";
 import DocumentPage from "./pages/DocumentPage";
 import History from "./pages/History";
@@ -27,8 +29,11 @@ export default function App() {
       <Route path="/mot-de-passe" element={<Protected><ChangePassword /></Protected>} />
       <Route element={<Protected><Layout /></Protected>}>
         <Route index element={<NewDocument />} />
-        <Route path="historique" element={<History />} />
+        <Route path="documents" element={<History />} />
+        <Route path="historique" element={<Navigate to="/documents" replace />} />
         <Route path="documents/:id" element={<DocumentPage />} />
+        <Route path="lots" element={<Batches />} />
+        <Route path="lots/:id" element={<BatchPage />} />
         <Route path="administration" element={<Protected admin><Admin /></Protected>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

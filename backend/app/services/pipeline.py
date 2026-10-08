@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models import (Block, Correction, CorrectionStatus, DocStatus, Document, Export, Page, utcnow)
+from app.services.ocr_config import OcrConfig
 from app.services import app_settings, document_model, preprocess, storage
 from app.services.docx_builder import BlockModel, DocxBuilder, Options, PageModel
 from app.services.llm import LlmError, OllamaClient, correct_block
@@ -24,6 +25,29 @@ from app.services.ocr.html_utils import to_text
 
 log = logging.getLogger("ocr.pipeline")
 RENDER_DPI = 200
+MIN_DPI, MAX_DPI = 100, 400
+
+
+class Cancelled(RuntimeError):
+    """L'utilisateur a annulé le document pendant son traitement."""
+
+
+def check_cancel(db: Session, doc: Document) -> None:
+    """Lu entre deux pages : une annulation demandée pendant le traitement l'arrête au plus vite."""
+    db.refresh(doc, ["cancel_requested"])
+    if doc.cancel_requested:
+        raise Cancelled()
+
+
+def render_dpi(page_width_pt: float, target_px: int) -> int:
+    """Résolution de rendu donnant une page de `target_px` pixels de large (0 : 200 dpi), bornée à 100-400 dpi.
+
+    Surya 2 réduit lui-même au-delà de ~6 mégapixels pour la mise en page, mais lit chaque bloc sur l'image fournie :
+    une page plus large aide les petits caractères (et les points de l'arabe), au prix du temps de calcul.
+    """
+    if target_px <= 0 or page_width_pt <= 0:
+        return RENDER_DPI
+    return int(max(MIN_DPI, min(MAX_DPI, round(target_px * 72 / page_width_pt))))
 TEXT_SKIP = VISUAL_LABELS | {"Stamp"}
 
 OPTION_DEFAULTS = {"preprocess": "auto", "llm": "off", "review": False, "ollama_model": None, "llm_all": False,
@@ -51,7 +75,8 @@ def count_pdf_pages(path: Path) -> int:
         pdf.close()
 
 
-def render_and_preprocess(db: Session, doc: Document) -> None:
+def render_and_preprocess(db: Session, doc: Document, cfg: OcrConfig | None = None) -> None:
+    cfg = cfg or OcrConfig.from_env()
     opts = doc_options(doc)
     profile = opts["preprocess"] if opts["preprocess"] != "auto" else app_settings.get_setting(db, "default_preprocess")
     src = storage.doc_dir("uploads", doc.user_id, doc.id) / doc.stored_name
@@ -60,7 +85,8 @@ def render_and_preprocess(db: Session, doc: Document) -> None:
         n = len(pdf)
         if not doc.pages:
             for i in range(n):
-                db.add(Page(document_id=doc.id, index=i, dpi=RENDER_DPI, status="pending"))
+                dpi = render_dpi(pdf[i].get_width(), cfg.page_width)
+                db.add(Page(document_id=doc.id, index=i, dpi=dpi, status="pending"))
             doc.page_count = n
             db.commit()
             db.refresh(doc)
@@ -68,8 +94,10 @@ def render_and_preprocess(db: Session, doc: Document) -> None:
         for page in doc.pages:
             if page.status != "pending":
                 continue
+            check_cancel(db, doc)
             try:
-                pil = pdf[page.index].render(scale=RENDER_DPI / 72).to_pil().convert("RGB")
+                page.dpi = render_dpi(pdf[page.index].get_width(), cfg.page_width)  # réglage du moment (reprise)
+                pil = pdf[page.index].render(scale=page.dpi / 72).to_pil().convert("RGB")
                 bgr = cv2.cvtColor(np.asarray(pil), cv2.COLOR_RGB2BGR)
                 color, pre_rgb, used, _angle = preprocess.process_page(bgr, profile)
                 p1, r1 = storage.new_path("pages", doc.user_id, doc.id, ".jpg")
@@ -95,8 +123,12 @@ def run_ocr(db: Session, doc: Document, engine: OcrEngine) -> None:
     todo = [p for p in doc.pages if p.status == "rendered"]
     total = max(1, len(doc.pages))
     for page in todo:
+        check_cancel(db, doc)
         try:
-            pre = Image.open(storage.resolve(page.preprocessed_path)).convert("RGB")
+            work = storage.resolve(page.preprocessed_path) if page.preprocessed_path else None
+            if work is None or not work.is_file():  # image de travail perdue : l'image d'origine redressée suffit
+                work = storage.resolve(page.image_path)
+            pre = Image.open(work).convert("RGB")
             ocr = engine.recognize(pre)
             original = cv2.imdecode(np.fromfile(str(storage.resolve(page.image_path)), dtype=np.uint8), cv2.IMREAD_COLOR)
             document_model.save_blocks(db, doc, page, ocr, original)
@@ -110,6 +142,77 @@ def run_ocr(db: Session, doc: Document, engine: OcrEngine) -> None:
         db.commit()
         done = sum(1 for p in doc.pages if p.status in ("ocr_done", "error"))
         _set(doc, db, DocStatus.ocr, 0.3 + 0.5 * done / total)
+
+
+# ------------------------------------------------------------------ 2 bis. seconde lecture des blocs douteux
+
+SECOND_LABELS = {"Text", "SectionHeader", "PageHeader", "PageFooter", "Caption", "Footnote", "ListItem", "Form"}
+
+
+def second_reading_candidates(doc: Document, cfg: OcrConfig | None = None) -> list[Block]:
+    threshold = (cfg or OcrConfig.from_env()).second_reader_threshold
+    return [b for p in doc.pages if p.status == "ocr_done" for b in p.blocks
+            if b.label in SECOND_LABELS and (b.confidence is None or b.confidence < threshold)]
+
+
+def run_second_reading(db: Session, doc: Document, cfg: OcrConfig | None = None) -> dict:
+    """Relit les blocs douteux avec PaddleOCR-VL et confronte les deux lectures (consensus.decide).
+
+    Lecture remplacée : correction « ocr2 » appliquée et annulable dans la relecture. Désaccord : bloc « à vérifier ».
+    Le moteur principal doit déjà être arrêté si la VRAM ne suffit pas pour deux serveurs (voir le worker).
+    """
+    from app.services.gpu import LlamaServerError
+    from app.services.ocr import consensus, second_reader
+    from app.services.ocr.html_utils import escape
+    from app.services.stamps import erase_stamps
+
+    cfg = cfg or OcrConfig.from_env()
+    stats = {"relus": 0, "remplaces": 0, "desaccords": 0, "ignoree": False}
+    blocks = second_reading_candidates(doc, cfg)
+    if not blocks or not cfg.second_reader or not second_reader.available():
+        stats["ignoree"] = bool(blocks)
+        return stats
+    reader = second_reader.SecondReader(config=cfg)
+    try:
+        reader.start()
+    except LlamaServerError:
+        log.warning("document %s : second lecteur indisponible, seconde lecture ignorée", doc.id)
+        stats["ignoree"] = True
+        return stats
+    try:
+        images: dict[int, np.ndarray] = {}
+        for i, b in enumerate(blocks):
+            if i % 10 == 0:
+                check_cancel(db, doc)
+            page = b.page
+            if page.id not in images:
+                bgr = cv2.imdecode(np.fromfile(str(storage.resolve(page.image_path)), dtype=np.uint8), cv2.IMREAD_COLOR)
+                images[page.id] = cv2.cvtColor(erase_stamps(bgr)[0], cv2.COLOR_BGR2RGB)
+            img = images[page.id]
+            h, w = img.shape[:2]
+            x0, y0, x1, y1 = (int(v) for v in b.bbox)
+            crop = Image.fromarray(img[max(0, y0 - 4):min(h, y1 + 4), max(0, x0 - 4):min(w, x1 + 4)])
+            try:
+                text, conf = reader.read(crop)
+            except Exception as e:  # noqa: BLE001 - jamais de contenu dans les journaux
+                log.warning("document %s : seconde lecture d'un bloc en échec (%s)", doc.id, type(e).__name__)
+                continue
+            stats["relus"] += 1
+            verdict = consensus.decide(to_text(b.html_current), b.confidence, text, conf)
+            if not verdict.agree:
+                stats["desaccords"] += 1
+                b.to_check = True
+            if verdict.use_second:
+                new = "<p>" + "<br/>".join(escape(line) for line in text.splitlines() if line.strip()) + "</p>"
+                db.add(Correction(block_id=b.id, source="ocr2", before=b.html_current, after=new,
+                                  model_name=second_reader.ALIAS, status=CorrectionStatus.auto_applied.value))
+                b.html_current = new
+                stats["remplaces"] += 1
+            db.commit()
+            _set(doc, db, DocStatus.ocr, 0.8 + 0.05 * (i + 1) / len(blocks))
+    finally:
+        reader.stop()
+    return stats
 
 
 # ------------------------------------------------------------------ 3. correction LLM
@@ -141,6 +244,8 @@ def run_correction(db: Session, doc: Document) -> dict:
               if b.label not in TEXT_SKIP and to_text(b.html_current) and (b.confidence is None or b.confidence < threshold)]
     try:
         for i, b in enumerate(blocks):
+            if i % 10 == 0:
+                check_cancel(db, doc)
             try:
                 new, verdict = correct_block(client, b.html_current, max_change)
             except LlmError:

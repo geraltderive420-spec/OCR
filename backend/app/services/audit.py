@@ -8,6 +8,8 @@ from app.models import AuditLog
 ACTIONS = {
     "login", "login_failed", "logout", "password_changed", "upload", "download", "delete", "retry",
     "finalize", "user_created", "user_updated", "password_reset", "setting_changed", "purge",
+    "cancel", "setting_reset", "batch_created", "batch_cancel", "batch_retry", "batch_finalize", "batch_deleted",
+    "batch_download",
 }
 
 

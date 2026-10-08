@@ -167,6 +167,28 @@ def _insert_at(blocks: list[RefinedBlock], box: Box) -> int:
     return (max(above) + 1) if above else 0
 
 
+def fuse_detections(blocks: list[tuple[str, Box]], detections: list[tuple[str, Box, float]],
+                    min_score: float = 0.6, max_covered: float = 0.3) -> tuple[list[tuple[str, Box, int | None]], int]:
+    """Ajoute à la mise en page de Surya les zones qu'un détecteur (Heron) voit et que Surya a sautées.
+
+    Une détection sûre (score ≥ `min_score`) dont moins de `max_covered` de la surface est couverte par les blocs de
+    Surya devient un bloc, inséré dans l'ordre de lecture ; les détections déjà couvertes ne changent rien (Surya garde
+    l'ordre et les étiquettes). Retourne ([(étiquette, boîte, indice Surya ou None)], nombre de blocs ajoutés).
+    """
+    out = [RefinedBlock(label, tuple(map(float, box)), i) for i, (label, box) in enumerate(blocks)]
+    added = 0
+    for label, box, score in sorted(detections, key=lambda d: -d[2]):
+        a = area(box)
+        if score < min_score or a <= 0:
+            continue
+        covered = sum(inter(box, b.bbox) for b in out) / a
+        if covered >= max_covered:
+            continue
+        out.insert(_insert_at(out, box), RefinedBlock(label, tuple(map(float, box)), None))
+        added += 1
+    return [(b.label, b.bbox, b.source) for b in out], added
+
+
 def token_estimate(lines: list[Box]) -> int:
     """Estimation du nombre de tokens d'un bloc créé (~4 tokens par hauteur de ligne de largeur)."""
     return int(sum(4 * (ln[2] - ln[0]) / max(1.0, ln[3] - ln[1]) for ln in lines)) + 50

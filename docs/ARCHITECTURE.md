@@ -1,13 +1,13 @@
 # Architecture
 
 ```
-Navigateur (React)  ──HTTPS──►  FastAPI (OcrApi)  ──►  MariaDB
+Navigateur (React)  ──HTTP(S)──►  FastAPI (API)  ──►  SQLite (data/db/ocr.sqlite3, WAL)
                                    │  table jobs
                                    ▼
-                              Worker (OcrWorker, 1 processus, séquentiel)
+                              Worker (1 processus, séquentiel ; supervisé par `python -m app.serve`)
                                  ├─ rendu PDF (pypdfium2, 200 DPI) + redressement + prétraitement (OpenCV)
                                  ├─ gestionnaire GPU : VRAM libre, démarrage / arrêt de llama-server (par PID)
-                                 ├─ Surya 2 (client) ──► llama-server 127.0.0.1:8081 (GPU, à la demande)
+                                 ├─ Surya 2 (client) ──► llama-server 127.0.0.1:8091 (GPU, à la demande)
                                  ├─ correction ───────► Ollama 127.0.0.1:11434 (GPU partagé, modèle choisi par l'administrateur)
                                  └─ génération DOCX (python-docx + XML)
 Fichiers : data/{uploads,pages,crops,exports}/<utilisateur>/<document>/<nom aléatoire>
@@ -22,7 +22,9 @@ correction par l'IA modifient le modèle, jamais le DOCX. `corrections` trace ch
 
 ## File d'attente et reprise
 
-Pas de Redis : table `jobs` (`SELECT … FOR UPDATE SKIP LOCKED`). L'état est dans la base (statut de chaque page) : un worker
+Pas de Redis : table `jobs`, prise atomique par `UPDATE … WHERE status='queued'` (sûre même avec deux workers), ordre équitable
+entre utilisateurs (les exports d'abord). Les documents d'un **lot** (`batches`) sont des documents ordinaires regroupés.
+Annulation : `documents.cancel_requested`, lu par le worker entre deux pages. L'état est dans la base (statut de chaque page) : un worker
 tué reprend là où il s'est arrêté ; un job « en cours » dont le verrou est trop ancien est remis en file. Une page en échec
 n'échoue pas le document. Attente du GPU : le job est remis en file avec un délai, sans compter comme un échec.
 
